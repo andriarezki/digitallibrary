@@ -16,6 +16,7 @@ import UsersPage from "@/pages/users";
 import ReportsPage from "@/pages/reports";
 import NotFound from "@/pages/not-found";
 import { Skeleton } from "@/components/ui/skeleton";
+import { UserContext } from "@/context/UserContext";
 
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -32,7 +33,7 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
 }
 
 function AppContent() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, user } = useAuth(); // <-- Make sure useAuth returns user info
 
   if (isLoading) {
     return (
@@ -51,18 +52,20 @@ function AppContent() {
   }
 
   return (
-    <AuthenticatedLayout>
-      <Switch>
-        <Route path="/" component={DashboardPage} />
-        <Route path="/books" component={BooksPage} />
-        <Route path="/categories" component={CategoriesPage} />
-        <Route path="/shelves" component={ShelvesPage} />
-        <Route path="/loans" component={LoansPage} />
-        <Route path="/users" component={UsersPage} />
-        <Route path="/reports" component={ReportsPage} />
-        <Route component={NotFound} />
-      </Switch>
-    </AuthenticatedLayout>
+    <UserContext.Provider value={user}>
+      <AuthenticatedLayout>
+        <Switch>
+          <Route path="/" component={DashboardPage} />
+          <Route path="/books" component={BooksPage} />
+          <Route path="/categories" component={CategoriesPage} />
+          <Route path="/shelves" component={ShelvesPage} />
+          <Route path="/loans" component={LoansPage} />
+          <Route path="/users" component={UsersPage} />
+          <Route path="/reports" component={ReportsPage} />
+          <Route component={NotFound} />
+        </Switch>
+      </AuthenticatedLayout>
+    </UserContext.Provider>
   );
 }
 

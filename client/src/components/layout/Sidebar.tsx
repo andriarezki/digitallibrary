@@ -13,19 +13,23 @@ import {
   User
 } from "lucide-react";
 
-const navigation = [
-  { name: "Dashboard", href: "/", icon: BarChart3 },
-  { name: "Books Management", href: "/books", icon: Book },
-  { name: "Categories", href: "/categories", icon: Tags },
-  { name: "Shelves", href: "/shelves", icon: Archive },
-  { name: "Loans", href: "/loans", icon: BookOpen },
-  { name: "Users", href: "/users", icon: Users },
-  { name: "Reports", href: "/reports", icon: FileText },
-];
-
 export function Sidebar() {
   const [location] = useLocation();
   const { user, logout, isLogoutPending } = useAuth();
+
+  const isAdmin = user?.level === "admin";
+
+  // Move navigation array here so we can filter it
+  const navigation = [
+    { name: "Dashboard", href: "/", icon: BarChart3 },
+    { name: "Books Management", href: "/books", icon: Book },
+    { name: "Categories", href: "/categories", icon: Tags },
+    { name: "Shelves", href: "/shelves", icon: Archive },
+    { name: "Loans", href: "/loans", icon: BookOpen },
+    { name: "Users", href: "/users", icon: Users },
+    // Only include Reports if admin
+    ...(isAdmin ? [{ name: "Reports", href: "/reports", icon: FileText }] : []),
+  ];
 
   const handleLogout = async () => {
     try {
@@ -53,17 +57,17 @@ export function Sidebar() {
             const isActive = location === item.href || (item.href !== "/" && location.startsWith(item.href));
             
             return (
-              <Link key={item.name} href={item.href}>
-                <a
-                  className={`flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
-                    isActive
-                      ? "bg-blue-50 text-primary border-r-2 border-primary"
-                      : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
-                  }`}
-                >
-                  <Icon className="w-5 h-5" />
-                  <span>{item.name}</span>
-                </a>
+              <Link
+                key={item.name}
+                href={item.href}
+                className={`flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isActive
+                    ? "bg-blue-50 text-primary border-r-2 border-primary"
+                    : "text-slate-700 hover:bg-slate-100 hover:text-slate-900"
+                }`}
+              >
+                <Icon className="w-5 h-5" />
+                <span>{item.name}</span>
               </Link>
             );
           })}

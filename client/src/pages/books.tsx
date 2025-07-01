@@ -13,6 +13,7 @@ import { BukuWithDetails, Kategori, Rak } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useUser } from "@/context/UserContext";
 
 interface BooksResponse {
   books: BukuWithDetails[];
@@ -20,6 +21,9 @@ interface BooksResponse {
 }
 
 export default function BooksPage() {
+  const user = useUser();
+  const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
+
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
   const [search, setSearch] = useState("");
@@ -209,7 +213,9 @@ export default function BooksPage() {
   };
 
   const openPDFViewer = (book: BukuWithDetails) => {
-    setSelectedBook(book);
+    // Remove "/pdfs/" prefix if present
+    const pdfFileName = book.lampiran?.replace(/^\/?pdfs\//, "");
+    setSelectedBook({ ...book, lampiran: pdfFileName });
     setPdfViewerOpen(true);
   };
 
@@ -306,13 +312,15 @@ export default function BooksPage() {
       <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">Books Management</h1>
-          <Button 
-            onClick={() => setAddDialogOpen(true)}
-            className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add New Book
-          </Button>
+          {isAdminOrPetugas && (
+            <Button 
+              onClick={() => setAddDialogOpen(true)}
+              className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add New Book
+            </Button>
+          )}
         </div>
       </div>
 
@@ -512,33 +520,37 @@ export default function BooksPage() {
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openPDFViewer(book)}
-                              className="text-primary hover:text-blue-800"
-                              title="View PDF"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleEditBook(book)}
-                              className="text-slate-600 hover:text-slate-800"
-                              title="Edit Book"
-                            >
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => handleDeleteBook(book)}
-                              className="text-red-600 hover:text-red-800"
-                              title="Delete Book"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
+                            {isAdminOrPetugas && (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openPDFViewer(book)}
+                                  className="text-primary hover:text-blue-800"
+                                  title="View PDF"
+                                >
+                                  <Eye className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleEditBook(book)}
+                                  className="text-slate-600 hover:text-slate-800"
+                                  title="Edit Book"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleDeleteBook(book)}
+                                  className="text-red-600 hover:text-red-800"
+                                  title="Delete Book"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>

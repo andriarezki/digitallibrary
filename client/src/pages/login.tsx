@@ -161,7 +161,7 @@ export default function LoginPage() {
               
               <div className="mt-6 text-center">
                 <p className="text-sm text-slate-500">
-                  Default: admin / admin123
+                  Default: user / user
                 </p>
               </div>
             </CardContent>

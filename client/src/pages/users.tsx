@@ -21,6 +21,7 @@ import {
 import { Plus, Edit, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { useUser } from "@/context/UserContext";
 
 interface User {
   id_login: number;
@@ -38,6 +39,9 @@ interface UsersResponse {
 export default function UsersPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const user = useUser();
+  const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
+
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -177,13 +181,15 @@ export default function UsersPage() {
           <h1 className="text-2xl font-bold text-slate-900">
             Users Management
           </h1>
-          <Button
-            onClick={() => setAddDialogOpen(true)}
-            className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Add User
-          </Button>
+          {isAdminOrPetugas && (
+            <Button
+              onClick={() => setAddDialogOpen(true)}
+              className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add User
+            </Button>
+          )}
         </div>
       </div>
       <div className="p-6">
@@ -211,23 +217,27 @@ export default function UsersPage() {
                     <TableCell>{user.email || "-"}</TableCell>
                     <TableCell>{user.level || "-"}</TableCell>
                     <TableCell className="text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleEditUser(user)}
-                        title="Edit"
-                      >
-                        <Edit className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteUser(user)}
-                        title="Delete"
-                        className="text-red-600 hover:text-red-800"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
+                      {isAdminOrPetugas && (
+                        <>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditUser(user)}
+                            title="Edit"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteUser(user)}
+                            title="Delete"
+                            className="text-red-600 hover:text-red-800"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))
@@ -243,186 +253,192 @@ export default function UsersPage() {
         </div>
       </div>
       {/* Add User Dialog */}
-      <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Add New User</DialogTitle>
-            <DialogDescription>
-              Fill in the username and password for the new user.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Username *
-              </label>
-              <Input
-                value={addForm.user}
-                onChange={(e) =>
-                  handleAddFormChange("user", e.target.value)
-                }
-                placeholder="Enter username"
-                className="w-full"
-              />
+      {isAdminOrPetugas && (
+        <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add New User</DialogTitle>
+              <DialogDescription>
+                Fill in the username and password for the new user.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Username *
+                </label>
+                <Input
+                  value={addForm.user}
+                  onChange={(e) =>
+                    handleAddFormChange("user", e.target.value)
+                  }
+                  placeholder="Enter username"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Password *
+                </label>
+                <Input
+                  type="password"
+                  value={addForm.pass}
+                  onChange={(e) =>
+                    handleAddFormChange("pass", e.target.value)
+                  }
+                  placeholder="Enter password"
+                  className="w-full"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Password *
-              </label>
-              <Input
-                type="password"
-                value={addForm.pass}
-                onChange={(e) =>
-                  handleAddFormChange("pass", e.target.value)
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setAddDialogOpen(false)}
+                disabled={addMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveAdd}
+                disabled={
+                  addMutation.isPending || !addForm.user || !addForm.pass
                 }
-                placeholder="Enter password"
-                className="w-full"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setAddDialogOpen(false)}
-              disabled={addMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveAdd}
-              disabled={
-                addMutation.isPending || !addForm.user || !addForm.pass
-              }
-              className="bg-primary hover:bg-blue-700"
-            >
-              {addMutation.isPending ? "Adding..." : "Add User"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+                className="bg-primary hover:bg-blue-700"
+              >
+                {addMutation.isPending ? "Adding..." : "Add User"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {/* Edit User Dialog */}
-      <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Edit User</DialogTitle>
-            <DialogDescription>
-              Edit the user information. Leave password blank to keep unchanged.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-4 space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Username *
-              </label>
-              <Input
-                value={editForm.user}
-                onChange={(e) =>
-                  handleEditFormChange("user", e.target.value)
-                }
-                placeholder="Enter username"
-                className="w-full"
-              />
+      {isAdminOrPetugas && (
+        <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Edit User</DialogTitle>
+              <DialogDescription>
+                Edit the user information. Leave password blank to keep unchanged.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Username *
+                </label>
+                <Input
+                  value={editForm.user}
+                  onChange={(e) =>
+                    handleEditFormChange("user", e.target.value)
+                  }
+                  placeholder="Enter username"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Password
+                </label>
+                <Input
+                  type="password"
+                  value={editForm.pass}
+                  onChange={(e) =>
+                    handleEditFormChange("pass", e.target.value)
+                  }
+                  placeholder="Enter new password (leave blank to keep current)"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Name
+                </label>
+                <Input
+                  value={editForm.nama}
+                  onChange={(e) =>
+                    handleEditFormChange("nama", e.target.value)
+                  }
+                  placeholder="Enter name"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Email
+                </label>
+                <Input
+                  value={editForm.email}
+                  onChange={(e) =>
+                    handleEditFormChange("email", e.target.value)
+                  }
+                  placeholder="Enter email"
+                  className="w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">
+                  Level
+                </label>
+                <Input
+                  value={editForm.level}
+                  onChange={(e) =>
+                    handleEditFormChange("level", e.target.value)
+                  }
+                  placeholder="Enter level (e.g. admin, user)"
+                  className="w-full"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Password
-              </label>
-              <Input
-                type="password"
-                value={editForm.pass}
-                onChange={(e) =>
-                  handleEditFormChange("pass", e.target.value)
-                }
-                placeholder="Enter new password (leave blank to keep current)"
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Name
-              </label>
-              <Input
-                value={editForm.nama}
-                onChange={(e) =>
-                  handleEditFormChange("nama", e.target.value)
-                }
-                placeholder="Enter name"
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Email
-              </label>
-              <Input
-                value={editForm.email}
-                onChange={(e) =>
-                  handleEditFormChange("email", e.target.value)
-                }
-                placeholder="Enter email"
-                className="w-full"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-2">
-                Level
-              </label>
-              <Input
-                value={editForm.level}
-                onChange={(e) =>
-                  handleEditFormChange("level", e.target.value)
-                }
-                placeholder="Enter level (e.g. admin, user)"
-                className="w-full"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setEditDialogOpen(false)}
-              disabled={editMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleSaveEdit}
-              disabled={editMutation.isPending || !editForm.user}
-              className="bg-primary hover:bg-blue-700"
-            >
-              {editMutation.isPending ? "Saving..." : "Save Changes"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setEditDialogOpen(false)}
+                disabled={editMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSaveEdit}
+                disabled={editMutation.isPending || !editForm.user}
+                className="bg-primary hover:bg-blue-700"
+              >
+                {editMutation.isPending ? "Saving..." : "Save Changes"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
       {/* Delete Confirmation Dialog */}
-      <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
-            <DialogDescription>
-              Are you sure you want to delete user{" "}
-              <b>{selectedUser?.user}</b>? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setDeleteDialogOpen(false)}
-              disabled={deleteMutation.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={confirmDelete}
-              disabled={deleteMutation.isPending}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              {deleteMutation.isPending ? "Deleting..." : "Delete"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {isAdminOrPetugas && (
+        <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete User</DialogTitle>
+              <DialogDescription>
+                Are you sure you want to delete user{" "}
+                <b>{selectedUser?.user}</b>? This action cannot be undone.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setDeleteDialogOpen(false)}
+                disabled={deleteMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={confirmDelete}
+                disabled={deleteMutation.isPending}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {deleteMutation.isPending ? "Deleting..." : "Delete"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }

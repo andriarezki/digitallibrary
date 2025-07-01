@@ -2,10 +2,12 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertLoginSchema, insertBukuSchema } from "@shared/schema";
-import path from "path";
 import express from "express";
 import session from "express-session";
 import multer from "multer";
+import path from "path";
+import { v4 as uuidv4 } from "uuid";
+
 
 declare module 'express-session' {
   interface SessionData {
@@ -14,7 +16,16 @@ declare module 'express-session' {
   }
 }
 
-const upload = multer({ dest: path.join(process.cwd(), "pdfs") });
+const storageConfig = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, path.join(process.cwd(), "pdfs"));
+  },
+  filename: (req, file, cb) => {
+    // Always save with .pdf extension
+    cb(null, uuidv4() + ".pdf");
+  }
+});
+const upload = multer({ storage: storageConfig });
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Session middleware
@@ -32,6 +43,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Serve PDF files
   app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs')));
   app.use('/pdfs', express.static(path.join(process.cwd(), 'pdfs')));
+
+  // Custom handler to serve PDFs inline
+  app.get(['/pdfs/:filename', '/api/pdfs/:filename'], (req, res) => {
+    const filePath = path.join(process.cwd(), 'pdfs', req.params.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send('File not found');
+    }
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${req.params.filename}"`);
+    fs.createReadStream(filePath).pipe(res);
+  });
 
   // Authentication middleware
   const requireAuth = (req: any, res: any, next: any) => {

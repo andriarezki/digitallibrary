@@ -10,6 +10,8 @@ interface PDFViewerProps {
 }
 
 export function PDFViewer({ isOpen, onClose, title, pdfPath }: PDFViewerProps) {
+  // Only show if pdfPath is truthy and ends with .pdf
+  const isValidPdf = pdfPath && pdfPath.endsWith('.pdf');
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[95vw] w-full max-h-[95vh] h-[95vh] flex flex-col p-0">
@@ -30,7 +32,7 @@ export function PDFViewer({ isOpen, onClose, title, pdfPath }: PDFViewerProps) {
         </DialogHeader>
         
         <div className="flex-1 overflow-hidden p-2">
-          {pdfPath ? (
+          {isValidPdf ? (
             <iframe
               src={`/api/pdfs/${pdfPath}`}
               className="w-full h-full border-0 rounded-lg shadow-sm"
