@@ -62,6 +62,11 @@ export default {
           ring: "var(--sidebar-ring)",
         },
       },
+      fontFamily: {
+        sans: ['Poppins', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'Noto Sans', 'sans-serif'],
+        'poppins': ['Poppins', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        'mono': ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'Liberation Mono', 'Courier New', 'monospace'],
+      },
       keyframes: {
         "accordion-down": {
           from: {

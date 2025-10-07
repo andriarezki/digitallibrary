@@ -6,17 +6,34 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/use-auth";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { Footer } from "@/components/layout/Footer";
-import LoginPage from "@/pages/login";
-import DashboardPage from "@/pages/dashboard";
-import BooksPage from "@/pages/books";
-import CategoriesPage from "@/pages/categories";
-import ShelvesPage from "@/pages/shelves";
-import LoansPage from "@/pages/loans";
-import UsersPage from "@/pages/users";
-import ReportsPage from "@/pages/reports";
-import NotFound from "@/pages/not-found";
 import { Skeleton } from "@/components/ui/skeleton";
 import { UserContext } from "@/context/UserContext";
+import { Suspense, lazy } from "react";
+
+// Lazy load pages for better performance
+const LoginPage = lazy(() => import("@/pages/login"));
+const DashboardPage = lazy(() => import("@/pages/dashboard"));
+const BooksPage = lazy(() => import("@/pages/books"));
+const CategoriesPage = lazy(() => import("@/pages/categories"));
+const ShelvesPage = lazy(() => import("@/pages/shelves"));
+const LoansPage = lazy(() => import("@/pages/loans"));
+const UsersPage = lazy(() => import("@/pages/users"));
+const ReportsPage = lazy(() => import("@/pages/reports"));
+const NotFound = lazy(() => import("@/pages/not-found"));
+const AboutPage = lazy(() => import("@/pages/about"));
+
+// Loading component for lazy-loaded pages
+function PageLoadingFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="space-y-4 w-full max-w-md">
+        <Skeleton className="h-12 w-12 rounded-full mx-auto" />
+        <Skeleton className="h-4 w-48 mx-auto" />
+        <Skeleton className="h-4 w-32 mx-auto" />
+      </div>
+    </div>
+  );
+}
 
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -48,22 +65,29 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    return <LoginPage />;
+    return (
+      <Suspense fallback={<PageLoadingFallback />}>
+        <LoginPage />
+      </Suspense>
+    );
   }
 
   return (
-    <UserContext.Provider value={user}>
+    <UserContext.Provider value={user || null}>
       <AuthenticatedLayout>
-        <Switch>
-          <Route path="/" component={DashboardPage} />
-          <Route path="/books" component={BooksPage} />
-          <Route path="/categories" component={CategoriesPage} />
-          <Route path="/shelves" component={ShelvesPage} />
-          <Route path="/loans" component={LoansPage} />
-          <Route path="/users" component={UsersPage} />
-          <Route path="/reports" component={ReportsPage} />
-          <Route component={NotFound} />
-        </Switch>
+        <Suspense fallback={<PageLoadingFallback />}>
+          <Switch>
+            <Route path="/" component={DashboardPage} />
+            <Route path="/books" component={BooksPage} />
+            <Route path="/categories" component={CategoriesPage} />
+            <Route path="/shelves" component={ShelvesPage} />
+            <Route path="/loans" component={LoansPage} />
+            <Route path="/users" component={UsersPage} />
+            <Route path="/reports" component={ReportsPage} />
+            <Route path="/about" component={AboutPage} />
+            <Route component={NotFound} />
+          </Switch>
+        </Suspense>
       </AuthenticatedLayout>
     </UserContext.Provider>
   );

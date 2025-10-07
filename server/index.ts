@@ -1,10 +1,24 @@
 import express, { type Request, Response, NextFunction } from "express";
+import compression from "compression";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: false }));
+
+// Enable gzip compression for better performance
+app.use(compression({
+  filter: (req, res) => {
+    if (req.headers['x-no-compression']) {
+      return false;
+    }
+    return compression.filter(req, res);
+  },
+  level: 6,
+  threshold: 1024,
+}));
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: false, limit: '10mb' }));
 
 app.use((req, res, next) => {
   const start = Date.now();
@@ -56,14 +70,12 @@ app.use((req, res, next) => {
     serveStatic(app);
   }
 
+  // For local development, use 127.0.0.1. For production or LAN, use 0.0.0.0 or set HOST env.
   const port = parseInt(process.env.PORT || '5000');
   const host = process.env.HOST || '0.0.0.0';
-  
-  server.listen({
-    port,
-    host,
-    reusePort: true,
-  }, () => {
+
+
+  server.listen(port, host, () => {
     log(`serving on ${host}:${port}`);
   });
 })();

@@ -15,7 +15,7 @@ export default function LoansPage() {
       </div>
       <div className="p-6">
         <div className="text-center py-12 text-slate-500">
-          Loans management interface will be implemented here
+          Loans management interface will be implemented later
         </div>
       </div>
     </div>

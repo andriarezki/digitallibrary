@@ -65,7 +65,19 @@ export const queryClient = new QueryClient({
       refetchInterval: false,
       refetchOnWindowFocus: false,
       staleTime: 5 * 60 * 1000, // 5 minutes
-      retry: false,
+      gcTime: 1000 * 60 * 10, // 10 minutes cache time
+      retry: (failureCount, error) => {
+        // Don't retry on 4xx errors except 408, 429
+        if (error instanceof Error && 'status' in error) {
+          const status = (error as any).status;
+          if (status >= 400 && status < 500 && status !== 408 && status !== 429) {
+            return false;
+          }
+        }
+        return failureCount < 2;
+      },
+      retryDelay: attemptIndex => Math.min(1000 * 2 ** attemptIndex, 5000),
+      refetchOnReconnect: 'always',
     },
     mutations: {
       retry: false,

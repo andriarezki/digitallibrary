@@ -17,7 +17,7 @@ export default function CategoriesPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const user = useUser();
-  const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
+  const isAdmin = user?.level === "admin";
 
   // State for dialogs
   const [addDialogOpen, setAddDialogOpen] = useState(false);
@@ -28,11 +28,7 @@ export default function CategoriesPage() {
   // Add category mutation
   const addMutation = useMutation({
     mutationFn: async (data: { nama_kategori: string }) =>
-      apiRequest("/api/categories", {
-        method: "POST",
-        body: JSON.stringify(data),
-        headers: { "Content-Type": "application/json" },
-      }),
+      apiRequest("POST", "/api/categories", data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
       setAddDialogOpen(false);
@@ -47,11 +43,7 @@ export default function CategoriesPage() {
   // Edit category mutation
   const editMutation = useMutation({
     mutationFn: async (data: { id: number; nama_kategori: string }) =>
-      apiRequest(`/api/categories/${data.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ nama_kategori: data.nama_kategori }),
-        headers: { "Content-Type": "application/json" },
-      }),
+      apiRequest("PATCH", `/api/categories/${data.id}`, { nama_kategori: data.nama_kategori }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
       setEditDialogOpen(false);
@@ -67,7 +59,7 @@ export default function CategoriesPage() {
   // Delete category mutation (optional)
   const deleteMutation = useMutation({
     mutationFn: async (id: number) =>
-      apiRequest(`/api/categories/${id}`, { method: "DELETE" }),
+      apiRequest("DELETE", `/api/categories/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
       toast({ title: "Category deleted successfully" });
@@ -112,7 +104,7 @@ export default function CategoriesPage() {
       <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">Categories Management</h1>
-          {isAdminOrPetugas && (
+          {isAdmin && (
             <Button 
               onClick={handleAddCategory}
               className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
@@ -144,7 +136,7 @@ export default function CategoriesPage() {
                       <h3 className="font-medium text-slate-900">{category.nama_kategori}</h3>
                       <p className="text-sm text-slate-500">ID: {category.id_kategori}</p>
                     </div>
-                    {isAdminOrPetugas && (
+                    {isAdmin && (
                       <div className="flex space-x-2">
                         <Button variant="outline" size="sm" onClick={() => handleEditCategory(category)}>Edit</Button>
                         <Button variant="outline" size="sm" className="text-red-600 hover:text-red-800" onClick={() => handleDeleteCategory(category)}>Delete</Button>
@@ -159,7 +151,7 @@ export default function CategoriesPage() {
       </div>
 
       {/* Add Category Dialog */}
-      {isAdminOrPetugas && (
+  {isAdmin && (
         <Dialog open={addDialogOpen} onOpenChange={setAddDialogOpen}>
           <DialogContent>
             <DialogHeader>
@@ -182,7 +174,7 @@ export default function CategoriesPage() {
       )}
 
       {/* Edit Category Dialog */}
-      {isAdminOrPetugas && (
+  {isAdmin && (
         <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
           <DialogContent>
             <DialogHeader>

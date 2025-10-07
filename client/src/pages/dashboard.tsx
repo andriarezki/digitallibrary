@@ -36,6 +36,8 @@ interface DashboardStats {
   availableBooks: number;
   onLoan: number;
   categories: number;
+  siteVisitorCount: number;
+  pdfViewCount: number;
 }
 
 interface TopCategory {
@@ -204,7 +206,7 @@ export default function DashboardPage() {
                   <Book className="w-6 h-6" />
                 </div>
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-slate-600">Total Books</p>
+                  <p className="text-sm font-medium text-slate-600">Total Documents</p>
                   {statsLoading ? (
                     <Skeleton className="h-8 w-16 mt-1" />
                   ) : (
@@ -430,6 +432,20 @@ export default function DashboardPage() {
                       <div className="text-center p-2 bg-white rounded-lg">
                         <span className="text-slate-600 block">Collection size</span>
                         <p className="font-bold text-lg text-purple-600">Large</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 text-sm mt-4">
+                      <div className="text-center p-2 bg-white rounded-lg">
+                        <span className="text-slate-600 block">Site Visitors</span>
+                        <p className="font-bold text-lg text-green-600">
+                          {stats?.siteVisitorCount ?? 0}
+                        </p>
+                      </div>
+                      <div className="text-center p-2 bg-white rounded-lg">
+                        <span className="text-slate-600 block">PDF Views</span>
+                        <p className="font-bold text-lg text-green-600">
+                          {stats?.pdfViewCount ?? 0}
+                        </p>
                       </div>
                     </div>
                   </div>

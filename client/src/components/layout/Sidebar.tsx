@@ -22,11 +22,13 @@ export function Sidebar() {
   // Move navigation array here so we can filter it
   const navigation = [
     { name: "Dashboard", href: "/", icon: BarChart3 },
-    { name: "Books Management", href: "/books", icon: Book },
+    { name: "Document Repository", href: "/books", icon: Book },
     { name: "Categories", href: "/categories", icon: Tags },
-    { name: "Shelves", href: "/shelves", icon: Archive },
+  { name: "Location", href: "/shelves", icon: Archive },
     { name: "Loans", href: "/loans", icon: BookOpen },
-    { name: "Users", href: "/users", icon: Users },
+    { name: "About", href: "/about", icon: FileText },
+    // Only show Users for admin
+    ...(isAdmin ? [{ name: "Users", href: "/users", icon: Users }] : []),
     // Only include Reports if admin
     ...(isAdmin ? [{ name: "Reports", href: "/reports", icon: FileText }] : []),
   ];

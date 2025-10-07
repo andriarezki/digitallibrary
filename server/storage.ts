@@ -3,6 +3,20 @@ import { tblLogin, tblBuku, tblKategori, tblRak, type Login, type Buku, type Buk
 import { eq, like, or, desc, asc, count, sql, and } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
+// Visitor and PDF view counters (in-memory, resets on server restart)
+let siteVisitorCount = 0;
+let pdfViewCount = 0;
+
+export function incrementSiteVisitor() {
+  siteVisitorCount++;
+}
+export function incrementPdfView() {
+  pdfViewCount++;
+}
+export function getVisitorStats() {
+  return { siteVisitorCount, pdfViewCount };
+}
+
 export interface IStorage {
   // Auth methods
   getUserByCredentials(username: string, password: string): Promise<Login | undefined>;
@@ -30,12 +44,17 @@ export interface IStorage {
   getShelves(): Promise<Rak[]>;
   getShelfById(id: number): Promise<Rak | undefined>;
 
+  // Departments methods
+  getDepartments(): Promise<Array<{ department: string }>>;
+
   // Dashboard stats
   getDashboardStats(): Promise<{
     totalBooks: number;
     availableBooks: number;
     onLoan: number;
     categories: number;
+    siteVisitorCount: number;
+    pdfViewCount: number;
   }>;
 }
 
@@ -173,7 +192,7 @@ export class DatabaseStorage implements IStorage {
     return true; // Assume success if no error thrown
   }
 
-  async getBooks(page: number, limit: number, search?: string, categoryId?: number, rakId?: number): Promise<{ books: BukuWithDetails[], total: number }> {
+  async getBooks(page: number, limit: number, search?: string, categoryId?: number, rakId?: number, departmentFilter?: string): Promise<{ books: BukuWithDetails[], total: number }> {
     let whereConditions = [];
 
     if (search) {
@@ -195,6 +214,10 @@ export class DatabaseStorage implements IStorage {
       whereConditions.push(eq(tblBuku.id_rak, rakId));
     }
 
+    if (departmentFilter) {
+      whereConditions.push(eq(tblBuku.department, departmentFilter));
+    }
+
     const offset = (page - 1) * limit;
 
     const booksQuery = db
@@ -214,6 +237,7 @@ export class DatabaseStorage implements IStorage {
         jml: tblBuku.jml,
         tgl_masuk: tblBuku.tgl_masuk,
         tersedia: tblBuku.tersedia,
+        department: tblBuku.department,
         kategori_nama: tblKategori.nama_kategori,
         rak_nama: tblRak.nama_rak,
       })
@@ -263,6 +287,7 @@ export class DatabaseStorage implements IStorage {
         jml: tblBuku.jml,
         tgl_masuk: tblBuku.tgl_masuk,
         tersedia: tblBuku.tersedia,
+        department: tblBuku.department,
         kategori_nama: tblKategori.nama_kategori,
         rak_nama: tblRak.nama_rak,
       })
@@ -334,6 +359,12 @@ export class DatabaseStorage implements IStorage {
     return results;
   }
 
+  async updateCategory(id: number, data: { nama_kategori: string }): Promise<void> {
+    await db.update(tblKategori)
+      .set({ nama_kategori: data.nama_kategori })
+      .where(eq(tblKategori.id_kategori, id));
+  }
+
   async getShelves(): Promise<Rak[]> {
     return await db.select().from(tblRak).orderBy(asc(tblRak.nama_rak));
   }
@@ -353,6 +384,8 @@ export class DatabaseStorage implements IStorage {
     availableBooks: number;
     onLoan: number;
     categories: number;
+    siteVisitorCount: number;
+    pdfViewCount: number;
   }> {
     const [booksCount, availableCount, categoriesCount] = await Promise.all([
       db.select({ count: count() }).from(tblBuku),
@@ -369,8 +402,20 @@ export class DatabaseStorage implements IStorage {
       totalBooks,
       availableBooks,
       onLoan,
-      categories
+      categories,
+      siteVisitorCount,
+      pdfViewCount
     };
+  }
+
+  async getDepartments(): Promise<Array<{ department: string }>> {
+    const results = await db
+      .selectDistinct({ department: tblBuku.department })
+      .from(tblBuku)
+      .where(sql`${tblBuku.department} IS NOT NULL AND ${tblBuku.department} != ''`)
+      .orderBy(asc(tblBuku.department));
+    
+    return results.filter(r => r.department) as Array<{ department: string }>;
   }
 }
 

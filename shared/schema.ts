@@ -47,6 +47,7 @@ export const tblBuku = mysqlTable("tbl_buku", {
   jml: int("jml"),
   tgl_masuk: varchar("tgl_masuk", { length: 255 }),
   tersedia: int("tersedia"),
+  department: varchar("department", { length: 255 }),
 });
 
 export const insertLoginSchema = createInsertSchema(tblLogin).pick({
@@ -68,6 +69,30 @@ export const insertBukuSchema = createInsertSchema(tblBuku).omit({
   id_buku: true,
 });
 
+// Schema for handling FormData updates (coerces strings to numbers)
+export const updateBukuSchema = insertBukuSchema.partial().extend({
+  id_kategori: z.preprocess((val) => {
+    if (val === null || val === undefined || val === "") return undefined;
+    const num = Number(val);
+    return isNaN(num) ? undefined : num;
+  }, z.number().optional()),
+  id_rak: z.preprocess((val) => {
+    if (val === null || val === undefined || val === "") return undefined;
+    const num = Number(val);
+    return isNaN(num) ? undefined : num;
+  }, z.number().optional()),
+  tersedia: z.preprocess((val) => {
+    if (val === null || val === undefined || val === "") return undefined;
+    const num = Number(val);
+    return isNaN(num) ? undefined : num;
+  }, z.number().optional()),
+  jml: z.preprocess((val) => {
+    if (val === null || val === undefined || val === "") return undefined;
+    const num = Number(val);
+    return isNaN(num) ? undefined : num;
+  }, z.number().optional()),
+});
+
 export type InsertLogin = z.infer<typeof insertLoginSchema>;
 export type Login = typeof tblLogin.$inferSelect;
 export type InsertKategori = z.infer<typeof insertKategoriSchema>;
@@ -80,4 +105,5 @@ export type Buku = typeof tblBuku.$inferSelect;
 export type BukuWithDetails = Buku & {
   kategori_nama?: string | null;
   rak_nama?: string | null;
+  department?: string | null;
 };

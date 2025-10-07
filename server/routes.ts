@@ -1,11 +1,13 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertLoginSchema, insertBukuSchema } from "@shared/schema";
+import { insertLoginSchema, insertBukuSchema, updateBukuSchema } from "@shared/schema";
 import express from "express";
+import { incrementSiteVisitor, incrementPdfView } from "./storage";
 import session from "express-session";
 import multer from "multer";
 import path from "path";
+import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 
 
@@ -40,9 +42,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   }));
 
-  // Serve PDF files
-  app.use('/api/pdfs', express.static(path.join(process.cwd(), 'pdfs')));
-  app.use('/pdfs', express.static(path.join(process.cwd(), 'pdfs')));
+
+  // Authentication middleware
+  const requireAuth = (req: any, res: any, next: any) => {
+    if (!req.session.userId) {
+      return res.status(401).json({ message: "Authentication required" });
+    }
+    next();
+  };
+
+  // Serve static files (fonts and uploads) with cache headers
+  app.use('/uploads', (req, res, next) => {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
+    next();
+  }, express.static(path.join(process.cwd(), 'uploads')));
+  
+  // Serve font files with cache headers
+  app.use('/fonts', (req, res, next) => {
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable'); // 1 year
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    next();
+  }, express.static(path.join(process.cwd(), 'client/public/fonts')));
+
+  // Count PDF views
+  app.use('/api/pdfs', (req, res, next) => { incrementPdfView(); next(); }, express.static(path.join(process.cwd(), 'pdfs')));
+  app.use('/pdfs', (req, res, next) => { incrementPdfView(); next(); }, express.static(path.join(process.cwd(), 'pdfs')));
 
   // Custom handler to serve PDFs inline
   app.get(['/pdfs/:filename', '/api/pdfs/:filename'], (req, res) => {
@@ -55,13 +79,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
     fs.createReadStream(filePath).pipe(res);
   });
 
-  // Authentication middleware
-  const requireAuth = (req: any, res: any, next: any) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Authentication required" });
-    }
-    next();
-  };
+  // Count site visitors (simple: increments on every dashboard page API call)
+  app.get("/api/dashboard/stats", requireAuth, async (req, res, next) => { incrementSiteVisitor(); next(); });
 
   // Login
   app.post("/api/auth/login", async (req, res) => {
@@ -143,8 +162,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const search = req.query.search as string;
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : undefined;
       const rakId = req.query.rakId ? parseInt(req.query.rakId as string) : undefined;
+      const departmentFilter = req.query.departmentFilter as string;
 
-      const result = await storage.getBooks(page, limit, search, categoryId, rakId);
+      const result = await storage.getBooks(page, limit, search, categoryId, rakId, departmentFilter);
       res.json(result);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch books" });
@@ -168,26 +188,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/books", requireAuth, upload.single("lampiran"), async (req, res) => {
     try {
+      console.log('Request body:', req.body);
+      console.log('Request file:', (req as any).file);
+      
       // If the request is multipart/form-data (with file)
       let bookData: any;
       if (req.is("multipart/form-data")) {
         bookData = {
           ...req.body,
-          lampiran: req.file ? `/pdfs/${req.file.filename}` : null,
+          lampiran: (req as any).file ? (req as any).file.filename : null,
         };
-        // Convert numeric fields if needed
-        if (bookData.thn_buku) bookData.thn_buku = parseInt(bookData.thn_buku);
-        if (bookData.id_kategori) bookData.id_kategori = parseInt(bookData.id_kategori);
-        if (bookData.id_rak) bookData.id_rak = parseInt(bookData.id_rak);
+        // Convert numeric fields
+        if (bookData.thn_buku && bookData.thn_buku !== "") bookData.thn_buku = parseInt(bookData.thn_buku);
+        if (bookData.id_kategori && bookData.id_kategori !== "" && bookData.id_kategori !== "0") {
+          bookData.id_kategori = parseInt(bookData.id_kategori);
+        } else {
+          bookData.id_kategori = null;
+        }
+        if (bookData.id_rak && bookData.id_rak !== "" && bookData.id_rak !== "0") {
+          bookData.id_rak = parseInt(bookData.id_rak);
+        } else {
+          bookData.id_rak = null;
+        }
         if (bookData.tersedia) bookData.tersedia = parseInt(bookData.tersedia);
+        
+        // Clean up empty strings
+        Object.keys(bookData).forEach(key => {
+          if (bookData[key] === "") bookData[key] = null;
+        });
       } else {
         // If the request is JSON (no file)
         bookData = insertBukuSchema.parse(req.body);
       }
+      
+      console.log('Processed book data:', bookData);
       const book = await storage.createBook(bookData);
       res.status(201).json(book);
     } catch (error) {
-      res.status(400).json({ message: "Invalid book data" });
+      console.error('Add book error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      res.status(400).json({ message: "Invalid book data", error: errorMessage });
     }
   });
 
@@ -207,19 +247,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/books/:id", requireAuth, async (req, res) => {
+  app.patch("/api/books/:id", requireAuth, upload.single("lampiran"), async (req, res) => {
     try {
       const id = parseInt(req.params.id);
-      const bookData = insertBukuSchema.partial().parse(req.body);
-      const book = await storage.updateBook(id, bookData);
+      console.log("PATCH request for book ID:", id);
+      console.log("Request body:", req.body);
+      console.log("Request file:", (req as any).file);
       
+      let bookData: any = {};
+      if (req.is("multipart/form-data")) {
+        // Handle file upload and form fields
+        bookData = { ...req.body };
+        if ((req as any).file) {
+          bookData.lampiran = (req as any).file.filename;
+        }
+      } else {
+        bookData = req.body;
+      }
+      
+      console.log("Book data before validation:", bookData);
+      
+      // Use updateBukuSchema which handles string-to-number coercion
+      bookData = updateBukuSchema.parse(bookData);
+      
+      console.log("Book data after validation:", bookData);
+      
+      const book = await storage.updateBook(id, bookData);
       if (!book) {
         return res.status(404).json({ message: "Book not found" });
       }
       
+      console.log("Book updated successfully:", book);
       res.json(book);
     } catch (error) {
-      res.status(400).json({ message: "Invalid book data" });
+      console.error("Error in PATCH /api/books/:id:", error);
+      const errorMessage = error instanceof Error ? error.message : "Invalid book data";
+      res.status(400).json({ message: "Invalid book data", error: errorMessage });
     }
   });
 
@@ -248,6 +311,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Edit category (admin or petugas only)
+  app.patch("/api/categories/:id", requireAuth, async (req, res) => {
+    // Only allow admin or petugas
+    const user = req.session.user;
+    if (!user || (user.level !== "admin" && user.level !== "petugas")) {
+      return res.status(403).json({ message: "Forbidden: Only admin or petugas can edit categories" });
+    }
+    try {
+      const id = parseInt(req.params.id);
+      // Only allow updating nama_kategori
+      const { nama_kategori } = req.body;
+      if (!nama_kategori || typeof nama_kategori !== "string" || !nama_kategori.trim()) {
+        return res.status(400).json({ message: "Invalid category name" });
+      }
+      // Update in DB
+      await storage.updateCategory(id, { nama_kategori });
+      const updated = await storage.getCategoryById(id);
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update category" });
+    }
+  });
+
   // Shelves routes
   app.get("/api/shelves", requireAuth, async (req, res) => {
     try {
@@ -255,6 +341,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(shelves);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch shelves" });
+    }
+  });
+
+  // Departments routes
+  app.get("/api/departments", requireAuth, async (req, res) => {
+    try {
+      const departments = await storage.getDepartments();
+      res.json(departments);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch departments" });
     }
   });
 

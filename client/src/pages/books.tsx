@@ -8,7 +8,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PDFViewer } from "@/components/ui/pdf-viewer";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Eye, Edit, Trash2, Filter, X } from "lucide-react";
+import { Plus, Search, Eye, Edit, Trash2, Filter, X, FileText } from "lucide-react";
+import { Highlight } from "@/components/ui/highlight";
 import { BukuWithDetails, Kategori, Rak } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
@@ -29,6 +30,7 @@ export default function BooksPage() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<number | undefined>();
   const [rakId, setRakId] = useState<number | undefined>();
+  const [departmentFilter, setDepartmentFilter] = useState<string>("");
   const [selectedBook, setSelectedBook] = useState<BukuWithDetails | null>(null);
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
@@ -46,7 +48,8 @@ export default function BooksPage() {
     isbn: "",
     id_kategori: "",
     id_rak: "",
-    tersedia: 1 as number
+    tersedia: 1 as number,
+    department: ""
   });
 
   // Add form state
@@ -58,7 +61,8 @@ export default function BooksPage() {
     isbn: "",
     id_kategori: undefined as string | undefined,
     id_rak: undefined as string | undefined,
-    tersedia: 1 as number
+    tersedia: 1 as number,
+    department: ""
   });
 
   // Lampiran file state
@@ -87,7 +91,7 @@ export default function BooksPage() {
   }, [limit]);
 
   const { data: booksData, isLoading: booksLoading } = useQuery<BooksResponse>({
-    queryKey: ["/api/books", { page, limit, search, categoryId, rakId }],
+    queryKey: ["/api/books", { page, limit, search, categoryId, rakId, departmentFilter }],
   });
 
   const { data: categories } = useQuery<Kategori[]>({
@@ -96,6 +100,10 @@ export default function BooksPage() {
 
   const { data: shelves } = useQuery<Rak[]>({
     queryKey: ["/api/shelves"],
+  });
+
+  const { data: departments } = useQuery<Array<{ department: string }>>({
+    queryKey: ["/api/departments"],
   });
 
   // Delete mutation
@@ -131,9 +139,29 @@ export default function BooksPage() {
   // Edit mutation
   const editMutation = useMutation({
     mutationFn: async (data: { id: number; updates: any }) => {
-      const response = await apiRequest("PATCH", `/api/books/${data.id}`, data.updates);
+      console.log("Edit mutation called with:", data);
+      const formData = new FormData();
+      Object.keys(data.updates).forEach(key => {
+        const value = data.updates[key];
+        if (value !== null && value !== undefined && value !== "") {
+          formData.append(key, value.toString());
+        }
+      });
+      
+      console.log("FormData contents:");
+      for (let pair of formData.entries()) {
+        console.log(pair[0] + ': ' + pair[1]);
+      }
+      
+      const response = await fetch(`/api/books/${data.id}`, {
+        method: "PATCH",
+        body: formData,
+      });
+      
       if (!response.ok) {
-        throw new Error("Failed to update book");
+        const errorText = await response.text();
+        console.error("Edit request failed:", response.status, errorText);
+        throw new Error(`Failed to update book: ${response.status} ${errorText}`);
       }
       return response.json();
     },
@@ -148,6 +176,7 @@ export default function BooksPage() {
       setSelectedBook(null);
     },
     onError: (error: any) => {
+      console.error("Edit mutation error:", error);
       toast({
         title: "Error",
         description: error.message || "Failed to update book",
@@ -184,7 +213,8 @@ export default function BooksPage() {
         isbn: "",
         id_kategori: "0",
         id_rak: "0",
-        tersedia: 1
+        tersedia: 1,
+        department: ""
       });
       setLampiranFile(null);
     },
@@ -212,10 +242,15 @@ export default function BooksPage() {
     setPage(1);
   };
 
+  const handleDepartmentChange = (value: string) => {
+    setDepartmentFilter(value === "all" ? "" : value);
+    setPage(1);
+  };
+
   const openPDFViewer = (book: BukuWithDetails) => {
     // Remove "/pdfs/" prefix if present
     const pdfFileName = book.lampiran?.replace(/^\/?pdfs\//, "");
-    setSelectedBook({ ...book, lampiran: pdfFileName });
+  setSelectedBook({ ...book, lampiran: pdfFileName ?? null });
     setPdfViewerOpen(true);
   };
 
@@ -234,7 +269,8 @@ export default function BooksPage() {
       isbn: book.isbn || "",
       id_kategori: book.id_kategori ? book.id_kategori.toString() : "",
       id_rak: book.id_rak ? book.id_rak.toString() : "",
-      tersedia: (book.tersedia ?? 1) as number
+      tersedia: (book.tersedia ?? 1) as number,
+      department: book.department || ""
     });
     setEditDialogOpen(true);
   };
@@ -249,17 +285,32 @@ export default function BooksPage() {
   const handleSaveEdit = () => {
     if (!selectedBook) return;
     
-    const updates = {
-      title: editForm.title,
-      pengarang: editForm.pengarang,
-      penerbit: editForm.penerbit,
-      thn_buku: editForm.thn_buku ? parseInt(editForm.thn_buku) : null,
-      isbn: editForm.isbn,
-      id_kategori: editForm.id_kategori && editForm.id_kategori !== "0" ? parseInt(editForm.id_kategori) : null,
-      id_rak: editForm.id_rak && editForm.id_rak !== "0" ? parseInt(editForm.id_rak) : null,
-      tersedia: editForm.tersedia
-    };
+    const updates: any = {};
+    
+    // Only include fields that have values
+    if (editForm.title) updates.title = editForm.title;
+    if (editForm.pengarang) updates.pengarang = editForm.pengarang;
+    if (editForm.penerbit) updates.penerbit = editForm.penerbit;
+    if (editForm.thn_buku) updates.thn_buku = editForm.thn_buku;
+    if (editForm.isbn) updates.isbn = editForm.isbn;
+    if (editForm.department) updates.department = editForm.department;
+    
+    // Handle category
+    if (editForm.id_kategori && editForm.id_kategori !== "0") {
+      updates.id_kategori = parseInt(editForm.id_kategori);
+    }
+    
+    // Handle rack
+    if (editForm.id_rak && editForm.id_rak !== "0") {
+      updates.id_rak = parseInt(editForm.id_rak);
+    }
+    
+    // Handle availability status
+    if (editForm.tersedia !== undefined) {
+      updates.tersedia = editForm.tersedia;
+    }
 
+    console.log("Sending edit data:", updates);
     editMutation.mutate({ id: selectedBook.id_buku, updates });
   };
 
@@ -281,6 +332,7 @@ export default function BooksPage() {
     formData.append("id_kategori", addForm.id_kategori || "");
     formData.append("id_rak", addForm.id_rak || "");
     formData.append("tersedia", addForm.tersedia.toString());
+    formData.append("department", addForm.department);
     if (lampiranFile) formData.append("lampiran", lampiranFile);
 
     addMutation.mutate(formData);
@@ -301,6 +353,7 @@ export default function BooksPage() {
     setSearch("");
     setCategoryId(undefined);
     setRakId(undefined);
+    setDepartmentFilter("");
     setPage(1);
   };
 
@@ -311,14 +364,14 @@ export default function BooksPage() {
       {/* Header */}
       <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-slate-900">Books Management</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Document Repository</h1>
           {isAdminOrPetugas && (
             <Button 
               onClick={() => setAddDialogOpen(true)}
               className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
             >
               <Plus className="w-4 h-4 mr-2" />
-              Add New Book
+              Add New Document
             </Button>
           )}
         </div>
@@ -376,7 +429,21 @@ export default function BooksPage() {
             </SelectContent>
           </Select>
 
-          {(search || categoryId || rakId) && (
+          <Select onValueChange={handleDepartmentChange}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="All Departments" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Departments</SelectItem>
+              {departments?.map((dept) => (
+                <SelectItem key={dept.department} value={dept.department}>
+                  {dept.department}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {(search || categoryId || rakId || departmentFilter) && (
             <Button
               variant="outline"
               onClick={clearFilters}
@@ -389,37 +456,39 @@ export default function BooksPage() {
         </div>
       </div>
 
-      {/* Books Table */}
+      {/* Document Table */}
       <div className="p-6">
         <Card>
           <CardContent className="p-0">
-            
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[calc(100vh-300px)] overflow-y-auto">
               <table className="w-full min-w-full divide-y divide-slate-200">
-                <thead className="bg-slate-50">
+                <thead className="bg-slate-50 sticky top-0 z-10 shadow-sm">
                   <tr>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                      Book
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                      Document
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Author
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Publisher
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Category
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                      Department
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Year
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Status
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
-                      Details
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                      PDF
                     </th>
-                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">
+                    <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Actions
                     </th>
                   </tr>
@@ -440,6 +509,7 @@ export default function BooksPage() {
                         <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-4 w-32" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
+                        <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-4 w-12" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-8 w-8" /></td>
@@ -457,18 +527,16 @@ export default function BooksPage() {
                       <tr key={book.id_buku} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center">
-                            <img
-                              src={book.sampul || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?ixlib=rb-4.0.3&auto=format&fit=crop&w=100&h=140"}
-                              alt="Book cover"
-                              className="h-14 w-10 object-cover rounded flex-shrink-0"
-                            />
+                            <div className="h-14 w-10 bg-red-50 rounded flex items-center justify-center flex-shrink-0 border border-red-200">
+                              <FileText className="w-6 h-6 text-red-600" />
+                            </div>
                             <div className="ml-4 min-w-0 flex-1">
                               <button
                                 onClick={() => openPDFViewer(book)}
                                 className="text-sm font-medium text-primary hover:text-blue-800 text-left block w-full"
                               >
                                 <span className="line-clamp-2 break-words">
-                                  {book.title || "Untitled"}
+                                  <Highlight text={book.title || "Untitled"} highlight={search} />
                                 </span>
                               </button>
                               <p className="text-sm text-slate-500 truncate">
@@ -479,17 +547,22 @@ export default function BooksPage() {
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-900">
                           <div className="max-w-[150px] break-words line-clamp-2">
-                            {book.pengarang || "Unknown"}
+                            <Highlight text={book.pengarang || "Unknown"} highlight={search} />
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-900">
                           <div className="max-w-[150px] break-words line-clamp-2">
-                            {book.penerbit || "Unknown"}
+                            <Highlight text={book.penerbit || "Unknown"} highlight={search} />
                           </div>
                         </td>
                         <td className="px-6 py-4 text-sm text-slate-900">
                           <div className="max-w-[120px] break-words">
-                            {book.kategori_nama || "Uncategorized"}
+                            <Highlight text={book.kategori_nama || "Uncategorized"} highlight={search} />
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-900">
+                          <div className="max-w-[120px] break-words">
+                            <Highlight text={book.department || "N/A"} highlight={search} />
                           </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
@@ -507,16 +580,20 @@ export default function BooksPage() {
                             {book.tersedia === 1 ? "Available" : "On Loan"}
                           </Badge>
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => openBookDetails(book)}
-                            className="text-primary hover:text-blue-800"
-                            title="View Details"
-                          >
-                            Details
-                          </Button>
+                        <td className="px-6 py-4 whitespace-nowrap text-center">
+                          {book.lampiran && book.lampiran.endsWith('.pdf') ? (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => openPDFViewer(book)}
+                              title="View PDF"
+                              className="text-red-600 hover:text-red-800 hover:bg-red-50"
+                            >
+                              <FileText className="w-5 h-5" />
+                            </Button>
+                          ) : (
+                            <span className="text-slate-400"><FileText className="w-5 h-5 opacity-30" /></span>
+                          )}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
@@ -525,18 +602,9 @@ export default function BooksPage() {
                                 <Button
                                   variant="ghost"
                                   size="sm"
-                                  onClick={() => openPDFViewer(book)}
-                                  className="text-primary hover:text-blue-800"
-                                  title="View PDF"
-                                >
-                                  <Eye className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
                                   onClick={() => handleEditBook(book)}
                                   className="text-slate-600 hover:text-slate-800"
-                                  title="Edit Book"
+                                  title="Edit Document"
                                 >
                                   <Edit className="w-4 h-4" />
                                 </Button>
@@ -545,7 +613,7 @@ export default function BooksPage() {
                                   size="sm"
                                   onClick={() => handleDeleteBook(book)}
                                   className="text-red-600 hover:text-red-800"
-                                  title="Delete Book"
+                                  title="Delete Document"
                                 >
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
@@ -627,9 +695,13 @@ export default function BooksPage() {
               <div className="space-y-4">
                 <div className="flex items-start space-x-4">
                   <img
-                    src={selectedBook.sampul || "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?ixlib=rb-4.0.3&auto=format&fit=crop&w=150&h=200"}
+                    src={selectedBook.sampul ? `/uploads/${selectedBook.sampul}` : "/placeholder-book.jpg"}
                     alt="Book cover"
                     className="h-32 w-24 object-cover rounded flex-shrink-0"
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement;
+                      target.src = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTUwIiBoZWlnaHQ9IjIwMCIgdmlld0JveD0iMCAwIDE1MCAyMDAiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxNTAiIGhlaWdodD0iMjAwIiBmaWxsPSIjRjNGNEY2Ii8+CjxwYXRoIGQ9Ik01MCA2MEgxMDBWNzBINTBWNjBaIiBmaWxsPSIjOUNBM0FGIi8+CjxwYXRoIGQ9Ik0zMCA5MEgxMjBWMTAwSDMwVjkwWiIgZmlsbD0iIzlDQTNBRiIvPgo8cGF0aCBkPSJNNTAgMTIwSDEwMFYxMzBINTBWMTIwWiIgZmlsbD0iIzlDQTNBRiIvPgo8L3N2Zz4K";
+                    }}
                   />
                   <div className="flex-1 space-y-2">
                     <h3 className="text-lg font-semibold text-slate-900 break-words">
@@ -844,6 +916,16 @@ export default function BooksPage() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                  <Input
+                    value={editForm.department}
+                    onChange={(e) => handleEditFormChange("department", e.target.value)}
+                    placeholder="Enter department"
+                    className="w-full"
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -1009,6 +1091,16 @@ export default function BooksPage() {
                     <SelectItem value="0">On Loan</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                <Input
+                  value={addForm.department}
+                  onChange={(e) => handleAddFormChange("department", e.target.value)}
+                  placeholder="Enter department"
+                  className="w-full"
+                />
               </div>
 
               <div>
