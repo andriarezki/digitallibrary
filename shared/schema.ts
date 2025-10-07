@@ -1,4 +1,4 @@
-import { mysqlTable, int, varchar, text } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, varchar, text, timestamp } from "drizzle-orm/mysql-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -50,6 +50,22 @@ export const tblBuku = mysqlTable("tbl_buku", {
   department: varchar("department", { length: 255 }),
 });
 
+export const tblUserActivity = mysqlTable("tbl_user_activity", {
+  id: int("id").primaryKey().autoincrement(),
+  user_id: int("user_id").notNull(),
+  activity_type: varchar("activity_type", { length: 50 }).notNull(), // 'login', 'logout', 'view', etc.
+  activity_date: timestamp("activity_date").defaultNow().notNull(),
+  ip_address: varchar("ip_address", { length: 45 }),
+  user_agent: text("user_agent"),
+});
+
+export const insertUserActivitySchema = createInsertSchema(tblUserActivity).pick({
+  user_id: true,
+  activity_type: true,
+  ip_address: true,
+  user_agent: true,
+});
+
 export const insertLoginSchema = createInsertSchema(tblLogin).pick({
   user: true,
   pass: true,
@@ -93,6 +109,8 @@ export const updateBukuSchema = insertBukuSchema.partial().extend({
   }, z.number().optional()),
 });
 
+export type InsertUserActivity = z.infer<typeof insertUserActivitySchema>;
+export type UserActivity = typeof tblUserActivity.$inferSelect;
 export type InsertLogin = z.infer<typeof insertLoginSchema>;
 export type Login = typeof tblLogin.$inferSelect;
 export type InsertKategori = z.infer<typeof insertKategoriSchema>;

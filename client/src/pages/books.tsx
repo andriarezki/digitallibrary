@@ -489,8 +489,13 @@ export default function BooksPage() {
                       PDF
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
-                      Actions
+                      Location
                     </th>
+                    {isAdminOrPetugas && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                        Actions
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-slate-200">
@@ -513,13 +518,15 @@ export default function BooksPage() {
                         <td className="px-6 py-4"><Skeleton className="h-4 w-12" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-8 w-8" /></td>
-                        <td className="px-6 py-4">
-                          <div className="flex space-x-2">
-                            <Skeleton className="h-8 w-8" />
-                            <Skeleton className="h-8 w-8" />
-                            <Skeleton className="h-8 w-8" />
-                          </div>
-                        </td>
+                        <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>
+                        {isAdminOrPetugas && (
+                          <td className="px-6 py-4">
+                            <div className="flex space-x-2">
+                              <Skeleton className="h-8 w-8" />
+                              <Skeleton className="h-8 w-8" />
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   ) : (
@@ -595,32 +602,33 @@ export default function BooksPage() {
                             <span className="text-slate-400"><FileText className="w-5 h-5 opacity-30" /></span>
                           )}
                         </td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                          <div className="flex space-x-2">
-                            {isAdminOrPetugas && (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleEditBook(book)}
-                                  className="text-slate-600 hover:text-slate-800"
-                                  title="Edit Document"
-                                >
-                                  <Edit className="w-4 h-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => handleDeleteBook(book)}
-                                  className="text-red-600 hover:text-red-800"
-                                  title="Delete Document"
-                                >
-                                  <Trash2 className="w-4 h-4" />
-                                </Button>
-                              </>
-                            )}
-                          </div>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
+                          {book.rak_nama || "Not assigned"}
                         </td>
+                        {isAdminOrPetugas && (
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                            <div className="flex space-x-2">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditBook(book)}
+                                className="text-slate-600 hover:text-slate-800"
+                                title="Edit Document"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleDeleteBook(book)}
+                                className="text-red-600 hover:text-red-800"
+                                title="Delete Document"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </td>
+                        )}
                       </tr>
                     ))
                   )}

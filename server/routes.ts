@@ -106,6 +106,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
         level: user.level || 'user'
       };
 
+      // Log user activity
+      try {
+        await storage.logUserActivity(
+          user.id_login, 
+          'login', 
+          req.ip || req.connection.remoteAddress,
+          req.get('User-Agent')
+        );
+      } catch (activityError) {
+        console.error('Failed to log user activity:', activityError);
+        // Don't fail login if activity logging fails
+      }
+
       console.log('Login successful for user:', user.user);
       res.json({
         id: user.id_login,
@@ -151,6 +164,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(categories);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch top categories" });
+    }
+  });
+
+  // Monthly user activity for chart
+  app.get("/api/dashboard/monthly-activity", requireAuth, async (req, res) => {
+    try {
+      const activity = await storage.getMonthlyUserActivity();
+      res.json(activity);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch monthly user activity" });
+    }
+  });
+
+  // Weekly books added for chart
+  app.get("/api/dashboard/weekly-books", requireAuth, async (req, res) => {
+    try {
+      const weeklyBooks = await storage.getWeeklyBooksAdded();
+      res.json(weeklyBooks);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch weekly books data" });
     }
   });
 
@@ -311,12 +344,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Edit category (admin or petugas only)
-  app.patch("/api/categories/:id", requireAuth, async (req, res) => {
-    // Only allow admin or petugas
+  // Add new category (admin only)
+  app.post("/api/categories", requireAuth, async (req, res) => {
+    // Only allow admin
     const user = req.session.user;
-    if (!user || (user.level !== "admin" && user.level !== "petugas")) {
-      return res.status(403).json({ message: "Forbidden: Only admin or petugas can edit categories" });
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can add categories" });
+    }
+    try {
+      const { nama_kategori } = req.body;
+      if (!nama_kategori || typeof nama_kategori !== "string" || !nama_kategori.trim()) {
+        return res.status(400).json({ message: "Invalid category name" });
+      }
+      const newCategory = await storage.createCategory({ nama_kategori: nama_kategori.trim() });
+      res.status(201).json(newCategory);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to create category" });
+    }
+  });
+
+  // Edit category (admin only)
+  app.patch("/api/categories/:id", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can edit categories" });
     }
     try {
       const id = parseInt(req.params.id);
@@ -334,6 +386,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Delete category (admin only)
+  app.delete("/api/categories/:id", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can delete categories" });
+    }
+    try {
+      const id = parseInt(req.params.id);
+      const success = await storage.deleteCategory(id);
+      if (!success) {
+        return res.status(404).json({ message: "Category not found" });
+      }
+      res.json({ message: "Category deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete category" });
+    }
+  });
+
   // Shelves routes
   app.get("/api/shelves", requireAuth, async (req, res) => {
     try {
@@ -341,6 +412,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(shelves);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch shelves" });
+    }
+  });
+
+  // Add new shelf (admin only)
+  app.post("/api/shelves", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can add shelves" });
+    }
+    try {
+      const { nama_rak, lokasi, kapasitas } = req.body;
+      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
+        return res.status(400).json({ message: "Invalid shelf name" });
+      }
+      const newShelf = await storage.createShelf({ 
+        nama_rak: nama_rak.trim(),
+        lokasi: lokasi || null,
+        kapasitas: kapasitas ? parseInt(kapasitas) : null
+      });
+      res.status(201).json(newShelf);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to create shelf" });
+    }
+  });
+
+  // Edit shelf (admin only)
+  app.patch("/api/shelves/:id", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can edit shelves" });
+    }
+    try {
+      const id = parseInt(req.params.id);
+      const { nama_rak, lokasi, kapasitas } = req.body;
+      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
+        return res.status(400).json({ message: "Invalid shelf name" });
+      }
+      await storage.updateShelf(id, { 
+        nama_rak: nama_rak.trim(),
+        lokasi: lokasi || null,
+        kapasitas: kapasitas ? parseInt(kapasitas) : null
+      });
+      const updated = await storage.getShelfById(id);
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ message: "Failed to update shelf" });
+    }
+  });
+
+  // Delete shelf (admin only)
+  app.delete("/api/shelves/:id", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can delete shelves" });
+    }
+    try {
+      const id = parseInt(req.params.id);
+      const success = await storage.deleteShelf(id);
+      if (!success) {
+        return res.status(404).json({ message: "Shelf not found" });
+      }
+      res.json({ message: "Shelf deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to delete shelf" });
     }
   });
 

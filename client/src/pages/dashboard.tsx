@@ -31,6 +31,12 @@ ChartJS.register(
   LineElement
 );
 
+// Configure Chart.js defaults to use Poppins font
+ChartJS.defaults.font.family = 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif';
+ChartJS.defaults.font.size = 12;
+ChartJS.defaults.font.weight = 'normal';
+ChartJS.defaults.color = 'rgb(71, 85, 105)'; // slate-600
+
 interface DashboardStats {
   totalBooks: number;
   availableBooks: number;
@@ -46,16 +52,47 @@ interface TopCategory {
   count: number;
 }
 
+interface MonthlyActivity {
+  month: string;
+  activeUsers: number;
+}
+
+interface WeeklyBooks {
+  week: string;
+  booksAdded: number;
+}
+
+interface MonthlyActivity {
+  month: string;
+  activeUsers: number;
+}
+
 export default function DashboardPage() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard/stats"],
+    staleTime: 10 * 60 * 1000, // 10 minutes cache (stats don't change often)
+    gcTime: 20 * 60 * 1000, // 20 minutes garbage collection
   });
 
   const { data: topCategories, isLoading: categoriesLoading } = useQuery<TopCategory[]>({
     queryKey: ["/api/dashboard/top-categories"],
+    staleTime: 15 * 60 * 1000, // 15 minutes cache (categories change rarely)
+    gcTime: 30 * 60 * 1000, // 30 minutes garbage collection
+  });
+
+  const { data: monthlyActivity, isLoading: activityLoading } = useQuery<MonthlyActivity[]>({
+    queryKey: ["/api/dashboard/monthly-activity"],
+    staleTime: 5 * 60 * 1000, // 5 minutes cache
+    gcTime: 10 * 60 * 1000, // 10 minutes garbage collection
+  });
+
+  const { data: weeklyBooks, isLoading: weeklyBooksLoading } = useQuery<WeeklyBooks[]>({
+    queryKey: ["/api/dashboard/weekly-books"],
+    staleTime: 2 * 60 * 1000, // 2 minutes cache (more frequent updates)
+    gcTime: 5 * 60 * 1000, // 5 minutes garbage collection
   });
 
   // Chart data for library status with soft colors
@@ -104,15 +141,15 @@ export default function DashboardPage() {
     ],
   };
 
-  // Monthly activity data (mock data for demonstration)
+  // Monthly activity data (real data from API)
   const monthlyData = {
-    labels: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
+    labels: monthlyActivity?.map(data => data.month) || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
     datasets: [
       {
-        label: 'Books Added',
-        data: [12, 19, 8, 15, 22, 13],
-        borderColor: 'rgba(59, 130, 246, 0.8)',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        label: 'Active Users',
+        data: monthlyActivity?.map(data => data.activeUsers) || [0, 0, 0, 0, 0, 0],
+        borderColor: 'rgba(34, 197, 94, 0.8)',
+        backgroundColor: 'rgba(34, 197, 94, 0.1)',
         borderWidth: 3,
         fill: true,
         tension: 0.4,
@@ -120,38 +157,211 @@ export default function DashboardPage() {
     ],
   };
 
+  // Books added by category data (real data from API)
+  const weeklyBooksData = {
+    labels: weeklyBooks?.map(data => data.week) || ['Category 1', 'Category 2', 'Category 3', 'Category 4', 'Category 5', 'Category 6', 'Category 7', 'Category 8'],
+    datasets: [
+      {
+        label: 'Books Added by Category',
+        data: weeklyBooks?.map(data => data.booksAdded) || [0, 0, 0, 0, 0, 0, 0, 0],
+        backgroundColor: [
+          'rgba(168, 85, 247, 0.8)',   // Purple
+          'rgba(236, 72, 153, 0.8)',   // Pink
+          'rgba(59, 130, 246, 0.8)',   // Blue
+          'rgba(34, 197, 94, 0.8)',    // Green
+          'rgba(251, 146, 60, 0.8)',   // Orange
+          'rgba(168, 85, 247, 0.8)',   // Purple (repeat for more categories)
+          'rgba(236, 72, 153, 0.8)',   // Pink
+          'rgba(59, 130, 246, 0.8)',   // Blue
+        ],
+        borderColor: [
+          'rgba(168, 85, 247, 1)',
+          'rgba(236, 72, 153, 1)',
+          'rgba(59, 130, 246, 1)',
+          'rgba(34, 197, 94, 1)',
+          'rgba(251, 146, 60, 1)',
+          'rgba(168, 85, 247, 1)',
+          'rgba(236, 72, 153, 1)',
+          'rgba(59, 130, 246, 1)',
+        ],
+        borderWidth: 2,
+        borderRadius: 8,
+      },
+    ],
+  };
+
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 500, // Reduced from 1000ms to 500ms for faster loading
+      easing: 'easeOutQuart' as const,
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
+    },
     plugins: {
       legend: {
         position: 'bottom' as const,
         labels: {
-          padding: 20,
+          padding: 15, // Reduced padding
           usePointStyle: true,
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 11, // Reduced font size
+            weight: 500,
+          },
+          color: 'rgb(71, 85, 105)', // slate-600
+        },
+      },
+      tooltip: {
+        titleFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 13,
+          weight: 600,
+        },
+        bodyFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 12,
+          weight: 'normal' as const,
+        },
+      },
+    },
+    scales: {
+      x: {
+        grid: {
+          display: false, // Remove background grid lines
+        },
+        border: {
+          display: false, // Remove axis border
+        },
+        ticks: {
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 11,
+            weight: 500,
+          },
+          color: 'rgb(100, 116, 139)', // slate-500
+        },
+      },
+      y: {
+        grid: {
+          display: false, // Remove background grid lines
+        },
+        border: {
+          display: false, // Remove axis border
+        },
+        ticks: {
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 11,
+            weight: 500,
+          },
+          color: 'rgb(100, 116, 139)', // slate-500
         },
       },
     },
   };
 
+  // Doughnut chart specific options (no scales for Collection Status)
+  const doughnutChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: {
+      duration: 300, // Very fast animation for doughnut
+      easing: 'easeOutQuad' as const,
+    },
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          padding: 15, // Reduced padding
+          usePointStyle: true,
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 11, // Slightly smaller font
+            weight: 500,
+          },
+          color: 'rgb(71, 85, 105)', // slate-600
+        },
+      },
+      tooltip: {
+        titleFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 12, // Reduced font size
+          weight: 600,
+        },
+        bodyFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 11, // Reduced font size
+          weight: 'normal' as const,
+        },
+      },
+    },
+    // No scales property for doughnut chart - this removes x and y axis
+  };
+
   const barChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
+    animation: {
+      duration: 400, // Reduced from 800ms to 400ms for faster loading
+      easing: 'easeOutQuart' as const,
+    },
+    interaction: {
+      intersect: false,
+      mode: 'index' as const,
+    },
     plugins: {
       legend: {
         display: false,
+      },
+      tooltip: {
+        titleFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 12, // Reduced font size
+          weight: 600,
+        },
+        bodyFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 11, // Reduced font size
+          weight: 'normal' as const,
+        },
       },
     },
     scales: {
       y: {
         beginAtZero: true,
         grid: {
-          color: 'rgba(0, 0, 0, 0.1)',
+          display: false, // Remove background grid lines
+        },
+        border: {
+          display: false, // Remove axis border
+        },
+        ticks: {
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 10, // Smaller font for faster rendering
+            weight: 500,
+          },
+          color: 'rgb(100, 116, 139)', // slate-500
         },
       },
       x: {
         grid: {
-          display: false,
+          display: false, // Remove background grid lines
+        },
+        border: {
+          display: false, // Remove axis border
+        },
+        ticks: {
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 10, // Smaller font for faster rendering
+            weight: 500,
+          },
+          color: 'rgb(100, 116, 139)', // slate-500
         },
       },
     },
@@ -160,6 +370,8 @@ export default function DashboardPage() {
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/top-categories"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/monthly-activity"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/weekly-books"] });
     toast({
       title: "Data refreshed",
       description: "Dashboard data has been updated",
@@ -281,7 +493,7 @@ export default function DashboardPage() {
         </div>
 
         {/* Charts Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
           {/* Book Status Doughnut Chart */}
           <Card>
             <CardHeader>
@@ -292,7 +504,7 @@ export default function DashboardPage() {
                 <Skeleton className="h-64 w-full" />
               ) : (
                 <div className="h-64">
-                  <Doughnut data={statusChartData} options={chartOptions} />
+                  <Doughnut data={statusChartData} options={doughnutChartOptions} />
                 </div>
               )}
             </CardContent>
@@ -314,15 +526,35 @@ export default function DashboardPage() {
             </CardContent>
           </Card>
 
-          {/* Monthly Activity Line Chart */}
+          {/* Monthly User Activity Line Chart */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Monthly Activity</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Monthly User Activity</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64">
-                <Line data={monthlyData} options={chartOptions} />
-              </div>
+              {activityLoading ? (
+                <Skeleton className="h-64 w-full" />
+              ) : (
+                <div className="h-64">
+                  <Line data={monthlyData} options={chartOptions} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Books Added by Category Bar Chart */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-slate-800">Books Added by Category</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {weeklyBooksLoading ? (
+                <Skeleton className="h-64 w-full" />
+              ) : (
+                <div className="h-64">
+                  <Bar data={weeklyBooksData} options={barChartOptions} />
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>

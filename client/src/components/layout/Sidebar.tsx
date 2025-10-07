@@ -18,13 +18,15 @@ export function Sidebar() {
   const { user, logout, isLogoutPending } = useAuth();
 
   const isAdmin = user?.level === "admin";
+  const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
 
   // Move navigation array here so we can filter it
   const navigation = [
     { name: "Dashboard", href: "/", icon: BarChart3 },
     { name: "Document Repository", href: "/books", icon: Book },
-    { name: "Categories", href: "/categories", icon: Tags },
-  { name: "Location", href: "/shelves", icon: Archive },
+    // Only show Categories and Location for admin/petugas
+    ...(isAdminOrPetugas ? [{ name: "Categories", href: "/categories", icon: Tags }] : []),
+    ...(isAdminOrPetugas ? [{ name: "Location", href: "/shelves", icon: Archive }] : []),
     { name: "Loans", href: "/loans", icon: BookOpen },
     { name: "About", href: "/about", icon: FileText },
     // Only show Users for admin
