@@ -8,9 +8,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PDFViewer } from "@/components/ui/pdf-viewer";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Eye, Edit, Trash2, Filter, X, FileText } from "lucide-react";
+import { Plus, Search, Eye, Edit, Trash2, Filter, X, FileText, File, Image, Volume2, Video, Archive } from "lucide-react";
 import { Highlight } from "@/components/ui/highlight";
-import { BukuWithDetails, Kategori, Rak } from "@shared/schema";
+import { BukuWithDetails, Kategori, Lokasi } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
@@ -29,8 +29,9 @@ export default function BooksPage() {
   const [limit, setLimit] = useState(25);
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState<number | undefined>();
-  const [rakId, setRakId] = useState<number | undefined>();
+  const [lokasiId, setLokasiId] = useState<number | undefined>();
   const [departmentFilter, setDepartmentFilter] = useState<string>("");
+  const [yearFilter, setYearFilter] = useState<string>("");
   const [selectedBook, setSelectedBook] = useState<BukuWithDetails | null>(null);
   const [pdfViewerOpen, setPdfViewerOpen] = useState(false);
   const [detailsDialogOpen, setDetailsDialogOpen] = useState(false);
@@ -47,9 +48,10 @@ export default function BooksPage() {
     thn_buku: "",
     isbn: "",
     id_kategori: "",
-    id_rak: "",
+    id_lokasi: "",
     tersedia: 1 as number,
-    department: ""
+    department: "",
+    file_type: ""
   });
 
   // Add form state
@@ -60,9 +62,10 @@ export default function BooksPage() {
     thn_buku: "",
     isbn: "",
     id_kategori: undefined as string | undefined,
-    id_rak: undefined as string | undefined,
+    id_lokasi: undefined as string | undefined,
     tersedia: 1 as number,
-    department: ""
+    department: "",
+    file_type: ""
   });
 
   // Lampiran file state
@@ -70,6 +73,54 @@ export default function BooksPage() {
   
   const { toast } = useToast();
   const queryClient = useQueryClient();
+
+  // Function to get file type display info
+  const getFileTypeInfo = (book: BukuWithDetails) => {
+    // If file_type is explicitly set, use that
+    if (book.file_type) {
+      switch (book.file_type.toLowerCase()) {
+        case 'pdf':
+          return { icon: FileText, text: 'PDF', color: 'text-red-600' };
+        case 'image':
+          return { icon: Image, text: 'Image', color: 'text-green-600' };
+        case 'audio':
+          return { icon: Volume2, text: 'Audio', color: 'text-blue-600' };
+        case 'video':
+          return { icon: Video, text: 'Video', color: 'text-purple-600' };
+        case 'hardcopy':
+          return { icon: Archive, text: 'Hardcopy', color: 'text-amber-600' };
+        default:
+          return { icon: File, text: book.file_type, color: 'text-gray-600' };
+      }
+    }
+    
+    // Fallback: detect from file extension if no file_type is set
+    if (book.lampiran) {
+      const ext = book.lampiran.toLowerCase().split('.').pop();
+      switch (ext) {
+        case 'pdf':
+          return { icon: FileText, text: 'PDF', color: 'text-red-600' };
+        case 'jpg':
+        case 'jpeg':
+        case 'png':
+        case 'gif':
+        case 'bmp':
+          return { icon: Image, text: 'Image', color: 'text-green-600' };
+        case 'mp3':
+        case 'wav':
+        case 'flac':
+          return { icon: Volume2, text: 'Audio', color: 'text-blue-600' };
+        case 'mp4':
+        case 'avi':
+        case 'mkv':
+          return { icon: Video, text: 'Video', color: 'text-purple-600' };
+        default:
+          return { icon: File, text: 'File', color: 'text-gray-600' };
+      }
+    }
+    
+    return { icon: File, text: 'Unknown', color: 'text-gray-400' };
+  };
 
   // Real-time search with debounce
   useEffect(() => {
@@ -91,19 +142,23 @@ export default function BooksPage() {
   }, [limit]);
 
   const { data: booksData, isLoading: booksLoading } = useQuery<BooksResponse>({
-    queryKey: ["/api/books", { page, limit, search, categoryId, rakId, departmentFilter }],
+    queryKey: ["/api/books", { page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter }],
   });
 
   const { data: categories } = useQuery<Kategori[]>({
     queryKey: ["/api/categories"],
   });
 
-  const { data: shelves } = useQuery<Rak[]>({
-    queryKey: ["/api/shelves"],
+  const { data: locations } = useQuery<Lokasi[]>({
+    queryKey: ["/api/locations"],
   });
 
   const { data: departments } = useQuery<Array<{ department: string }>>({
     queryKey: ["/api/departments"],
+  });
+
+  const { data: availableYears } = useQuery<string[]>({
+    queryKey: ["/api/years"],
   });
 
   // Delete mutation
@@ -149,9 +204,9 @@ export default function BooksPage() {
       });
       
       console.log("FormData contents:");
-      for (let pair of formData.entries()) {
-        console.log(pair[0] + ': ' + pair[1]);
-      }
+      Array.from(formData.entries()).forEach(([key, value]) => {
+        console.log(key + ': ' + value);
+      });
       
       const response = await fetch(`/api/books/${data.id}`, {
         method: "PATCH",
@@ -212,9 +267,10 @@ export default function BooksPage() {
         thn_buku: "",
         isbn: "",
         id_kategori: "0",
-        id_rak: "0",
+        id_lokasi: "0",
         tersedia: 1,
-        department: ""
+        department: "",
+        file_type: ""
       });
       setLampiranFile(null);
     },
@@ -237,8 +293,8 @@ export default function BooksPage() {
     setPage(1);
   };
 
-  const handleShelfChange = (value: string) => {
-    setRakId(value === "all" ? undefined : parseInt(value));
+  const handleLocationChange = (value: string) => {
+    setLokasiId(value === "all" ? undefined : parseInt(value));
     setPage(1);
   };
 
@@ -268,9 +324,10 @@ export default function BooksPage() {
       thn_buku: book.thn_buku?.toString() || "",
       isbn: book.isbn || "",
       id_kategori: book.id_kategori ? book.id_kategori.toString() : "",
-      id_rak: book.id_rak ? book.id_rak.toString() : "",
+      id_lokasi: book.id_lokasi ? book.id_lokasi.toString() : "",
       tersedia: (book.tersedia ?? 1) as number,
-      department: book.department || ""
+      department: book.department || "",
+      file_type: book.file_type || ""
     });
     setEditDialogOpen(true);
   };
@@ -294,6 +351,7 @@ export default function BooksPage() {
     if (editForm.thn_buku) updates.thn_buku = editForm.thn_buku;
     if (editForm.isbn) updates.isbn = editForm.isbn;
     if (editForm.department) updates.department = editForm.department;
+    if (editForm.file_type) updates.file_type = editForm.file_type;
     
     // Handle category
     if (editForm.id_kategori && editForm.id_kategori !== "0") {
@@ -301,8 +359,8 @@ export default function BooksPage() {
     }
     
     // Handle rack
-    if (editForm.id_rak && editForm.id_rak !== "0") {
-      updates.id_rak = parseInt(editForm.id_rak);
+    if (editForm.id_lokasi && editForm.id_lokasi !== "0") {
+      updates.id_lokasi = parseInt(editForm.id_lokasi);
     }
     
     // Handle availability status
@@ -330,9 +388,10 @@ export default function BooksPage() {
     formData.append("thn_buku", addForm.thn_buku || "");
     formData.append("isbn", addForm.isbn);
     formData.append("id_kategori", addForm.id_kategori || "");
-    formData.append("id_rak", addForm.id_rak || "");
+    formData.append("id_lokasi", addForm.id_lokasi || "");
     formData.append("tersedia", addForm.tersedia.toString());
     formData.append("department", addForm.department);
+    formData.append("file_type", addForm.file_type);
     if (lampiranFile) formData.append("lampiran", lampiranFile);
 
     addMutation.mutate(formData);
@@ -352,8 +411,9 @@ export default function BooksPage() {
   const clearFilters = () => {
     setSearch("");
     setCategoryId(undefined);
-    setRakId(undefined);
+    setLokasiId(undefined);
     setDepartmentFilter("");
+    setYearFilter("");
     setPage(1);
   };
 
@@ -415,35 +475,51 @@ export default function BooksPage() {
             </SelectContent>
           </Select>
 
-          <Select onValueChange={handleShelfChange}>
-            <SelectTrigger className="w-48">
-              <SelectValue placeholder="All Shelves" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Shelves</SelectItem>
-              {shelves?.map((shelf) => (
-                <SelectItem key={shelf.id_rak} value={shelf.id_rak.toString()}>
-                  {shelf.nama_rak}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
           <Select onValueChange={handleDepartmentChange}>
             <SelectTrigger className="w-48">
               <SelectValue placeholder="All Departments" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Departments</SelectItem>
-              {departments?.map((dept) => (
-                <SelectItem key={dept.department} value={dept.department}>
-                  {dept.department}
+              <SelectItem value="DIAD">DIAD</SelectItem>
+              <SelectItem value="Sustainability">Sustainability</SelectItem>
+              <SelectItem value="Agronomy">Agronomy</SelectItem>
+              <SelectItem value="Crop Protection">Crop Protection</SelectItem>
+              <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
+              <SelectItem value="Laboratory">Laboratory</SelectItem>
+              <SelectItem value="FOESD">FOESD</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select onValueChange={handleLocationChange}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="All Locations" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Locations</SelectItem>
+              {locations?.map((location) => (
+                <SelectItem key={location.id_lokasi} value={location.id_lokasi.toString()}>
+                  {location.nama_lokasi}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
 
-          {(search || categoryId || rakId || departmentFilter) && (
+          <Select onValueChange={(value) => setYearFilter(value === "all" ? "" : value)}>
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder="All Years" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Years</SelectItem>
+              {availableYears?.map((year) => (
+                <SelectItem key={year} value={year}>
+                  {year}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          {(search || categoryId || lokasiId || departmentFilter || yearFilter) && (
             <Button
               variant="outline"
               onClick={clearFilters}
@@ -486,7 +562,7 @@ export default function BooksPage() {
                       Status
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
-                      PDF
+                      File Type
                     </th>
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Location
@@ -534,10 +610,7 @@ export default function BooksPage() {
                       <tr key={book.id_buku} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center">
-                            <div className="h-14 w-10 bg-red-50 rounded flex items-center justify-center flex-shrink-0 border border-red-200">
-                              <FileText className="w-6 h-6 text-red-600" />
-                            </div>
-                            <div className="ml-4 min-w-0 flex-1">
+                            <div className="min-w-0 flex-1">
                               <button
                                 onClick={() => openPDFViewer(book)}
                                 className="text-sm font-medium text-primary hover:text-blue-800 text-left block w-full"
@@ -546,9 +619,7 @@ export default function BooksPage() {
                                   <Highlight text={book.title || "Untitled"} highlight={search} />
                                 </span>
                               </button>
-                              <p className="text-sm text-slate-500 truncate">
-                                ISBN: {book.isbn || "N/A"}
-                              </p>
+                              {/* ISBN field hidden as requested */}
                             </div>
                           </div>
                         </td>
@@ -588,22 +659,19 @@ export default function BooksPage() {
                           </Badge>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-center">
-                          {book.lampiran && book.lampiran.endsWith('.pdf') ? (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => openPDFViewer(book)}
-                              title="View PDF"
-                              className="text-red-600 hover:text-red-800 hover:bg-red-50"
-                            >
-                              <FileText className="w-5 h-5" />
-                            </Button>
-                          ) : (
-                            <span className="text-slate-400"><FileText className="w-5 h-5 opacity-30" /></span>
-                          )}
+                          {(() => {
+                            const fileInfo = getFileTypeInfo(book);
+                            const IconComponent = fileInfo.icon;
+                            return (
+                              <div className="flex flex-col items-center">
+                                <IconComponent className={`w-5 h-5 ${fileInfo.color}`} />
+                                <span className={`text-xs ${fileInfo.color} mt-1`}>{fileInfo.text}</span>
+                              </div>
+                            );
+                          })()}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
-                          {book.rak_nama || "Not assigned"}
+                          {book.lokasi_nama || "Not assigned"}
                         </td>
                         {isAdminOrPetugas && (
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -763,9 +831,9 @@ export default function BooksPage() {
                   </div>
                   
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Shelf</label>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Location</label>
                     <p className="text-sm text-slate-900 p-2 bg-slate-50 rounded border">
-                      {selectedBook.rak_nama || "Not assigned"}
+                      {selectedBook.lokasi_nama || "Not assigned"}
                     </p>
                   </div>
                 </div>
@@ -872,7 +940,7 @@ export default function BooksPage() {
                     <label className="block text-sm font-medium text-slate-700 mb-2">Category</label>
                     <Select 
                       value={editForm.id_kategori || ""} 
-                      onValueChange={(value) => handleEditFormChange("id_kategori", value)}
+                      onValueChange={(value) => handleEditFormChange("id_kategori", value === "none" ? undefined : value)}
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select category" />
@@ -888,25 +956,47 @@ export default function BooksPage() {
                     </Select>
                   </div>
                   
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Shelf</label>
-                    <Select 
-                      value={editForm.id_rak || ""} 
-                      onValueChange={(value) => handleEditFormChange("id_rak", value)}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder="Select shelf" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="0">No Shelf</SelectItem>
-                        {shelves?.map((shelf) => (
-                          <SelectItem key={shelf.id_rak} value={shelf.id_rak.toString()}>
-                            {shelf.nama_rak}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                  <Select 
+                    value={editForm.department || ""} 
+                    onValueChange={(value) => handleEditFormChange("department", value === "none" ? undefined : value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select department" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">No Department</SelectItem>
+                      <SelectItem value="DIAD">DIAD</SelectItem>
+                      <SelectItem value="Sustainability">Sustainability</SelectItem>
+                      <SelectItem value="Agronomy">Agronomy</SelectItem>
+                      <SelectItem value="Crop Protection">Crop Protection</SelectItem>
+                      <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
+                      <SelectItem value="Laboratory">Laboratory</SelectItem>
+                      <SelectItem value="FOESD">FOESD</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Location</label>
+                  <Select 
+                    value={editForm.id_lokasi || ""} 
+                    onValueChange={(value) => handleEditFormChange("id_lokasi", value === "none" ? undefined : value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select location" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="0">No Location</SelectItem>
+                      {locations?.map((location) => (
+                        <SelectItem key={location.id_lokasi} value={location.id_lokasi.toString()}>
+                          {location.nama_lokasi}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 </div>
                 
                 <div>
@@ -926,13 +1016,23 @@ export default function BooksPage() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                  <Input
-                    value={editForm.department}
-                    onChange={(e) => handleEditFormChange("department", e.target.value)}
-                    placeholder="Enter department"
-                    className="w-full"
-                  />
+                  <label className="block text-sm font-medium text-slate-700 mb-2">File Type</label>
+                  <Select 
+                    value={editForm.file_type || ""} 
+                    onValueChange={(value) => handleEditFormChange("file_type", value === "none" ? undefined : value)}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select file type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not Specified</SelectItem>
+                      <SelectItem value="PDF">PDF</SelectItem>
+                      <SelectItem value="Image">Image</SelectItem>
+                      <SelectItem value="Audio">Audio</SelectItem>
+                      <SelectItem value="Video">Video</SelectItem>
+                      <SelectItem value="Hardcopy">Hardcopy</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             )}
@@ -1064,25 +1164,47 @@ export default function BooksPage() {
                   </Select>
                 </div>
                 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-2">Shelf</label>
-                  <Select 
-                    value={addForm.id_rak ?? "none"}
-                    onValueChange={(value) => handleAddFormChange("id_rak", value === "none" ? undefined : value)}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select shelf" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No Shelf</SelectItem>
-                      {shelves?.map((shelf) => (
-                        <SelectItem key={shelf.id_rak} value={shelf.id_rak.toString()}>
-                          {shelf.nama_rak}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
+                <Select 
+                  value={addForm.department || ""} 
+                  onValueChange={(value) => handleAddFormChange("department", value === "none" ? undefined : value)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Department</SelectItem>
+                    <SelectItem value="DIAD">DIAD</SelectItem>
+                    <SelectItem value="Sustainability">Sustainability</SelectItem>
+                    <SelectItem value="Agronomy">Agronomy</SelectItem>
+                    <SelectItem value="Crop Protection">Crop Protection</SelectItem>
+                    <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
+                    <SelectItem value="Laboratory">Laboratory</SelectItem>
+                    <SelectItem value="FOESD">FOESD</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Location</label>
+                <Select 
+                  value={addForm.id_lokasi ?? "none"}
+                  onValueChange={(value) => handleAddFormChange("id_lokasi", value === "none" ? undefined : value)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select location" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">No Location</SelectItem>
+                    {locations?.map((location) => (
+                      <SelectItem key={location.id_lokasi} value={location.id_lokasi.toString()}>
+                        {location.nama_lokasi}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               </div>
               
               <div>
@@ -1102,20 +1224,30 @@ export default function BooksPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                <Input
-                  value={addForm.department}
-                  onChange={(e) => handleAddFormChange("department", e.target.value)}
-                  placeholder="Enter department"
-                  className="w-full"
-                />
+                <label className="block text-sm font-medium text-slate-700 mb-2">File Type</label>
+                <Select 
+                  value={addForm.file_type || ""} 
+                  onValueChange={(value) => handleAddFormChange("file_type", value === "none" ? undefined : value)}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder="Select file type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Not Specified</SelectItem>
+                    <SelectItem value="PDF">PDF</SelectItem>
+                    <SelectItem value="Image">Image</SelectItem>
+                    <SelectItem value="Audio">Audio</SelectItem>
+                    <SelectItem value="Video">Video</SelectItem>
+                    <SelectItem value="Hardcopy">Hardcopy</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2">Attachment (PDF/Image)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Attachment (PDF/Image/Audio/Video)</label>
                 <Input
                   type="file"
-                  accept="application/pdf,image/*"
+                  accept="*/*"
                   onChange={e => setLampiranFile(e.target.files?.[0] || null)}
                   className="w-full"
                 />

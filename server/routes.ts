@@ -194,10 +194,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const limit = parseInt(req.query.limit as string) || 25;
       const search = req.query.search as string;
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : undefined;
-      const rakId = req.query.rakId ? parseInt(req.query.rakId as string) : undefined;
+      const lokasiId = req.query.lokasiId ? parseInt(req.query.lokasiId as string) : undefined;
       const departmentFilter = req.query.departmentFilter as string;
+      const yearFilter = req.query.yearFilter as string;
 
-      const result = await storage.getBooks(page, limit, search, categoryId, rakId, departmentFilter);
+      const result = await storage.getBooks(page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter);
       res.json(result);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch books" });
@@ -238,10 +239,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         } else {
           bookData.id_kategori = null;
         }
-        if (bookData.id_rak && bookData.id_rak !== "" && bookData.id_rak !== "0") {
-          bookData.id_rak = parseInt(bookData.id_rak);
+        if (bookData.id_lokasi && bookData.id_lokasi !== "" && bookData.id_lokasi !== "0") {
+          bookData.id_lokasi = parseInt(bookData.id_lokasi);
         } else {
-          bookData.id_rak = null;
+          bookData.id_lokasi = null;
         }
         if (bookData.tersedia) bookData.tersedia = parseInt(bookData.tersedia);
         
@@ -405,80 +406,80 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Shelves routes
-  app.get("/api/shelves", requireAuth, async (req, res) => {
+  // Locations routes
+  app.get("/api/locations", requireAuth, async (req, res) => {
     try {
-      const shelves = await storage.getShelves();
-      res.json(shelves);
+      const locations = await storage.getLocations();
+      res.json(locations);
     } catch (error) {
-      res.status(500).json({ message: "Failed to fetch shelves" });
+      res.status(500).json({ message: "Failed to fetch locations" });
     }
   });
 
-  // Add new shelf (admin only)
-  app.post("/api/shelves", requireAuth, async (req, res) => {
+  // Add new location (admin only)
+  app.post("/api/locations", requireAuth, async (req, res) => {
     // Only allow admin
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can add shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can add locations" });
     }
     try {
-      const { nama_rak, lokasi, kapasitas } = req.body;
-      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
-        return res.status(400).json({ message: "Invalid shelf name" });
+      const { nama_lokasi, deskripsi, kapasitas } = req.body;
+      if (!nama_lokasi || typeof nama_lokasi !== "string" || !nama_lokasi.trim()) {
+        return res.status(400).json({ message: "Invalid location name" });
       }
-      const newShelf = await storage.createShelf({ 
-        nama_rak: nama_rak.trim(),
-        lokasi: lokasi || null,
+      const newLocation = await storage.createLocation({ 
+        nama_lokasi: nama_lokasi.trim(),
+        deskripsi: deskripsi || null,
         kapasitas: kapasitas ? parseInt(kapasitas) : null
       });
-      res.status(201).json(newShelf);
+      res.status(201).json(newLocation);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create shelf" });
+      res.status(400).json({ message: "Failed to create location" });
     }
   });
 
-  // Edit shelf (admin only)
-  app.patch("/api/shelves/:id", requireAuth, async (req, res) => {
+  // Edit location (admin only)
+  app.patch("/api/locations/:id", requireAuth, async (req, res) => {
     // Only allow admin
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can edit shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can edit locations" });
     }
     try {
       const id = parseInt(req.params.id);
-      const { nama_rak, lokasi, kapasitas } = req.body;
-      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
-        return res.status(400).json({ message: "Invalid shelf name" });
+      const { nama_lokasi, deskripsi, kapasitas } = req.body;
+      if (!nama_lokasi || typeof nama_lokasi !== "string" || !nama_lokasi.trim()) {
+        return res.status(400).json({ message: "Invalid location name" });
       }
-      await storage.updateShelf(id, { 
-        nama_rak: nama_rak.trim(),
-        lokasi: lokasi || null,
+      await storage.updateLocation(id, { 
+        nama_lokasi: nama_lokasi.trim(),
+        deskripsi: deskripsi || null,
         kapasitas: kapasitas ? parseInt(kapasitas) : null
       });
-      const updated = await storage.getShelfById(id);
+      const updated = await storage.getLocationById(id);
       res.json(updated);
     } catch (error) {
-      res.status(400).json({ message: "Failed to update shelf" });
+      res.status(400).json({ message: "Failed to update location" });
     }
   });
 
-  // Delete shelf (admin only)
-  app.delete("/api/shelves/:id", requireAuth, async (req, res) => {
+  // Delete location (admin only)
+  app.delete("/api/locations/:id", requireAuth, async (req, res) => {
     // Only allow admin
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can delete shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can delete locations" });
     }
     try {
       const id = parseInt(req.params.id);
-      const success = await storage.deleteShelf(id);
+      const success = await storage.deleteLocation(id);
       if (!success) {
-        return res.status(404).json({ message: "Shelf not found" });
+        return res.status(404).json({ message: "Location not found" });
       }
-      res.json({ message: "Shelf deleted successfully" });
+      res.json({ message: "Location deleted successfully" });
     } catch (error) {
-      res.status(500).json({ message: "Failed to delete shelf" });
+      res.status(500).json({ message: "Failed to delete location" });
     }
   });
 
@@ -489,6 +490,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(departments);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch departments" });
+    }
+  });
+
+  // Years routes
+  app.get("/api/years", requireAuth, async (req, res) => {
+    try {
+      const years = await storage.getAvailableYears();
+      res.json(years);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch available years" });
     }
   });
 

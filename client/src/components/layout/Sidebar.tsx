@@ -26,7 +26,7 @@ export function Sidebar() {
     { name: "Document Repository", href: "/books", icon: Book },
     // Only show Categories and Location for admin/petugas
     ...(isAdminOrPetugas ? [{ name: "Categories", href: "/categories", icon: Tags }] : []),
-    ...(isAdminOrPetugas ? [{ name: "Location", href: "/shelves", icon: Archive }] : []),
+    ...(isAdminOrPetugas ? [{ name: "Location", href: "/locations", icon: Archive }] : []),
     { name: "Loans", href: "/loans", icon: BookOpen },
     { name: "About", href: "/about", icon: FileText },
     // Only show Users for admin
@@ -50,7 +50,7 @@ export function Sidebar() {
         <div className="flex items-center justify-center h-16 px-6 bg-primary">
           <div className="text-white">
             <BookOpen className="inline-block w-5 h-5 mr-2" />
-            <span className="text-lg font-semibold">Library System</span>
+            <span className="text-lg font-semibold">Digilib</span>
           </div>
         </div>
 

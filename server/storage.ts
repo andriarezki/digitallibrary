@@ -1,6 +1,6 @@
 import { db } from "./db";
-import { tblLogin, tblBuku, tblKategori, tblRak, tblUserActivity, type Login, type Buku, type BukuWithDetails, type Kategori, type Rak, type InsertBuku, type UserActivity } from "@shared/schema";
-import { eq, like, or, desc, asc, count, sql, and } from "drizzle-orm";
+import { tblLogin, tblBuku, tblKategori, tblLokasi, tblUserActivity, type Login, type Buku, type BukuWithDetails, type Kategori, type Lokasi, type InsertBuku, type UserActivity } from "@shared/schema";
+import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
 // Visitor and PDF view counters (in-memory, resets on server restart)
@@ -46,11 +46,12 @@ export interface IStorage {
   deleteUser(id: number): Promise<boolean>;
 
   // Books methods
-  getBooks(page: number, limit: number, search?: string, categoryId?: number, rakId?: number): Promise<{ books: BukuWithDetails[], total: number }>;
+  getBooks(page: number, limit: number, search?: string, categoryId?: number, lokasiId?: number, departmentFilter?: string, yearFilter?: string): Promise<{ books: BukuWithDetails[], total: number }>;
   getBookById(id: number): Promise<BukuWithDetails | undefined>;
   createBook(book: InsertBuku): Promise<Buku>;
   updateBook(id: number, book: Partial<InsertBuku>): Promise<Buku | undefined>;
   deleteBook(id: number): Promise<boolean>;
+  getAvailableYears(): Promise<string[]>;
 
   // Categories methods
   getCategories(): Promise<Kategori[]>;
@@ -60,12 +61,12 @@ export interface IStorage {
   deleteCategory(id: number): Promise<boolean>;
   getTopCategories(limit: number): Promise<Array<{ id: number; name: string; count: number }>>;
 
-  // Shelves methods
-  getShelves(): Promise<Rak[]>;
-  getShelfById(id: number): Promise<Rak | undefined>;
-  createShelf(data: { nama_rak: string; lokasi: string | null; kapasitas: number | null }): Promise<Rak>;
-  updateShelf(id: number, data: { nama_rak: string; lokasi: string | null; kapasitas: number | null }): Promise<void>;
-  deleteShelf(id: number): Promise<boolean>;
+  // Locations methods
+  getLocations(): Promise<Lokasi[]>;
+  getLocationById(id: number): Promise<Lokasi | undefined>;
+  createLocation(data: { nama_lokasi: string; deskripsi: string | null; kapasitas: number | null }): Promise<Lokasi>;
+  updateLocation(id: number, data: { nama_lokasi: string; deskripsi: string | null; kapasitas: number | null }): Promise<void>;
+  deleteLocation(id: number): Promise<boolean>;
 
   // Departments methods
   getDepartments(): Promise<Array<{ department: string }>>;
@@ -220,7 +221,7 @@ export class DatabaseStorage implements IStorage {
     return true; // Assume success if no error thrown
   }
 
-  async getBooks(page: number, limit: number, search?: string, categoryId?: number, rakId?: number, departmentFilter?: string): Promise<{ books: BukuWithDetails[], total: number }> {
+  async getBooks(page: number, limit: number, search?: string, categoryId?: number, lokasiId?: number, departmentFilter?: string, yearFilter?: string): Promise<{ books: BukuWithDetails[], total: number }> {
     let whereConditions = [];
 
     if (search) {
@@ -238,12 +239,16 @@ export class DatabaseStorage implements IStorage {
       whereConditions.push(eq(tblBuku.id_kategori, categoryId));
     }
 
-    if (rakId) {
-      whereConditions.push(eq(tblBuku.id_rak, rakId));
+    if (lokasiId) {
+      whereConditions.push(eq(tblBuku.id_lokasi, lokasiId));
     }
 
     if (departmentFilter) {
       whereConditions.push(eq(tblBuku.department, departmentFilter));
+    }
+
+    if (yearFilter) {
+      whereConditions.push(eq(tblBuku.thn_buku, yearFilter));
     }
 
     const offset = (page - 1) * limit;
@@ -253,7 +258,7 @@ export class DatabaseStorage implements IStorage {
         id_buku: tblBuku.id_buku,
         buku_id: tblBuku.buku_id,
         id_kategori: tblBuku.id_kategori,
-        id_rak: tblBuku.id_rak,
+        id_lokasi: tblBuku.id_lokasi,
         sampul: tblBuku.sampul,
         isbn: tblBuku.isbn,
         lampiran: tblBuku.lampiran,
@@ -266,12 +271,13 @@ export class DatabaseStorage implements IStorage {
         tgl_masuk: tblBuku.tgl_masuk,
         tersedia: tblBuku.tersedia,
         department: tblBuku.department,
+        file_type: tblBuku.file_type,
         kategori_nama: tblKategori.nama_kategori,
-        rak_nama: tblRak.nama_rak,
+        lokasi_nama: tblLokasi.nama_lokasi,
       })
       .from(tblBuku)
       .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
-      .leftJoin(tblRak, eq(tblBuku.id_rak, tblRak.id_rak))
+      .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
       .orderBy(desc(tblBuku.id_buku))
       .limit(limit)
       .offset(offset);
@@ -303,7 +309,7 @@ export class DatabaseStorage implements IStorage {
         id_buku: tblBuku.id_buku,
         buku_id: tblBuku.buku_id,
         id_kategori: tblBuku.id_kategori,
-        id_rak: tblBuku.id_rak,
+        id_lokasi: tblBuku.id_lokasi,
         sampul: tblBuku.sampul,
         isbn: tblBuku.isbn,
         lampiran: tblBuku.lampiran,
@@ -316,12 +322,13 @@ export class DatabaseStorage implements IStorage {
         tgl_masuk: tblBuku.tgl_masuk,
         tersedia: tblBuku.tersedia,
         department: tblBuku.department,
+        file_type: tblBuku.file_type,
         kategori_nama: tblKategori.nama_kategori,
-        rak_nama: tblRak.nama_rak,
+        lokasi_nama: tblLokasi.nama_lokasi,
       })
       .from(tblBuku)
       .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
-      .leftJoin(tblRak, eq(tblBuku.id_rak, tblRak.id_rak))
+      .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
       .where(eq(tblBuku.id_buku, id))
       .limit(1);
 
@@ -355,6 +362,16 @@ export class DatabaseStorage implements IStorage {
   async deleteBook(id: number): Promise<boolean> {
     const result = await db.delete(tblBuku).where(eq(tblBuku.id_buku, id));
     return result[0].affectedRows > 0;
+  }
+
+  async getAvailableYears(): Promise<string[]> {
+    const results = await db
+      .selectDistinct({ thn_buku: tblBuku.thn_buku })
+      .from(tblBuku)
+      .where(isNotNull(tblBuku.thn_buku))
+      .orderBy(desc(tblBuku.thn_buku));
+    
+    return results.map(r => r.thn_buku).filter((year): year is string => year !== null && year.trim() !== '');
   }
 
   async getCategories(): Promise<Kategori[]> {
@@ -419,50 +436,50 @@ export class DatabaseStorage implements IStorage {
     return result[0].affectedRows > 0;
   }
 
-  async getShelves(): Promise<Rak[]> {
-    return await db.select().from(tblRak).orderBy(asc(tblRak.nama_rak));
+  async getLocations(): Promise<Lokasi[]> {
+    return await db.select().from(tblLokasi).orderBy(asc(tblLokasi.nama_lokasi));
   }
 
-  async getShelfById(id: number): Promise<Rak | undefined> {
+  async getLocationById(id: number): Promise<Lokasi | undefined> {
     const results = await db
       .select()
-      .from(tblRak)
-      .where(eq(tblRak.id_rak, id))
+      .from(tblLokasi)
+      .where(eq(tblLokasi.id_lokasi, id))
       .limit(1);
     
     return results[0];
   }
 
-  async createShelf(data: { nama_rak: string; lokasi: string | null; kapasitas: number | null }): Promise<Rak> {
-    const result = await db.insert(tblRak)
+  async createLocation(data: { nama_lokasi: string; deskripsi: string | null; kapasitas: number | null }): Promise<Lokasi> {
+    const result = await db.insert(tblLokasi)
       .values({ 
-        nama_rak: data.nama_rak,
-        lokasi: data.lokasi,
+        nama_lokasi: data.nama_lokasi,
+        deskripsi: data.deskripsi,
         kapasitas: data.kapasitas
       });
     
-    const newShelf = await db
+    const newLocation = await db
       .select()
-      .from(tblRak)
-      .where(eq(tblRak.id_rak, result[0].insertId))
+      .from(tblLokasi)
+      .where(eq(tblLokasi.id_lokasi, result[0].insertId))
       .limit(1);
     
-    return newShelf[0];
+    return newLocation[0];
   }
 
-  async updateShelf(id: number, data: { nama_rak: string; lokasi: string | null; kapasitas: number | null }): Promise<void> {
-    await db.update(tblRak)
+  async updateLocation(id: number, data: { nama_lokasi: string; deskripsi: string | null; kapasitas: number | null }): Promise<void> {
+    await db.update(tblLokasi)
       .set({ 
-        nama_rak: data.nama_rak,
-        lokasi: data.lokasi,
+        nama_lokasi: data.nama_lokasi,
+        deskripsi: data.deskripsi,
         kapasitas: data.kapasitas
       })
-      .where(eq(tblRak.id_rak, id));
+      .where(eq(tblLokasi.id_lokasi, id));
   }
 
-  async deleteShelf(id: number): Promise<boolean> {
-    const result = await db.delete(tblRak)
-      .where(eq(tblRak.id_rak, id));
+  async deleteLocation(id: number): Promise<boolean> {
+    const result = await db.delete(tblLokasi)
+      .where(eq(tblLokasi.id_lokasi, id));
     return result[0].affectedRows > 0;
   }
 
@@ -599,19 +616,19 @@ export class DatabaseStorage implements IStorage {
     try {
       const results = await db
         .select({
-          categoryName: sql<string>`COALESCE(tk.nama_kategori, 'Uncategorized')`,
+          categoryName: sql<string>`COALESCE(${tblKategori.nama_kategori}, 'Uncategorized')`,
           booksAdded: sql<number>`COUNT(*)`,
-          latestDate: sql<string>`MAX(STR_TO_DATE(tb.tgl_masuk, '%Y-%m-%d'))`
+          latestDate: sql<string>`MAX(STR_TO_DATE(${tblBuku.tgl_masuk}, '%Y-%m-%d'))`
         })
         .from(tblBuku)
         .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
         .where(sql`
-          tb.tgl_masuk IS NOT NULL 
-          AND tb.tgl_masuk != ''
-          AND tb.tgl_masuk != '0000-00-00'
-          AND STR_TO_DATE(tb.tgl_masuk, '%Y-%m-%d') >= ${fourWeeksAgo}
+          ${tblBuku.tgl_masuk} IS NOT NULL 
+          AND ${tblBuku.tgl_masuk} != ''
+          AND ${tblBuku.tgl_masuk} != '0000-00-00'
+          AND STR_TO_DATE(${tblBuku.tgl_masuk}, '%Y-%m-%d') >= ${fourWeeksAgo}
         `)
-        .groupBy(sql`tk.id_kategori, tk.nama_kategori`)
+        .groupBy(sql`${tblKategori.id_kategori}, ${tblKategori.nama_kategori}`)
         .orderBy(sql`COUNT(*) DESC`)
         .limit(8); // Top 8 categories by book count
 
@@ -619,13 +636,13 @@ export class DatabaseStorage implements IStorage {
       if (results.length === 0) {
         const fallbackResults = await db
           .select({
-            categoryName: sql<string>`COALESCE(tk.nama_kategori, 'Uncategorized')`,
+            categoryName: sql<string>`COALESCE(${tblKategori.nama_kategori}, 'Uncategorized')`,
             booksAdded: sql<number>`COUNT(*)`
           })
           .from(tblBuku)
           .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
-          .where(sql`tb.tgl_masuk IS NOT NULL AND tb.tgl_masuk != '' AND tb.tgl_masuk != '0000-00-00'`)
-          .groupBy(sql`tk.id_kategori, tk.nama_kategori`)
+          .where(sql`${tblBuku.tgl_masuk} IS NOT NULL AND ${tblBuku.tgl_masuk} != '' AND ${tblBuku.tgl_masuk} != '0000-00-00'`)
+          .groupBy(sql`${tblKategori.id_kategori}, ${tblKategori.nama_kategori}`)
           .orderBy(sql`COUNT(*) DESC`)
           .limit(8);
 
