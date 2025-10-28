@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus } from "lucide-react";
 import { Kategori } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -9,6 +10,21 @@ import { useUser } from "@/context/UserContext";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { useState } from "react";
 import { apiRequest } from "@/lib/queryClient";
+
+// Predefined categories list
+const PREDEFINED_CATEGORIES = [
+  "Book",
+  "Journal", 
+  "Proceeding",
+  "Audio Visual",
+  "Catalogue",
+  "Flyer",
+  "Training",
+  "Poster", 
+  "Thesis",
+  "Report",
+  "Newspaper"
+];
 
 export default function CategoriesPage() {
   const { data: categories, isLoading } = useQuery<Kategori[]>({
@@ -24,6 +40,7 @@ export default function CategoriesPage() {
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<Kategori | null>(null);
   const [categoryName, setCategoryName] = useState("");
+  const [isCustomCategory, setIsCustomCategory] = useState(false);
 
   // Add category mutation
   const addMutation = useMutation({
@@ -72,6 +89,7 @@ export default function CategoriesPage() {
   // Handlers
   const handleAddCategory = () => {
     setCategoryName("");
+    setIsCustomCategory(false);
     setAddDialogOpen(true);
   };
 
@@ -84,6 +102,11 @@ export default function CategoriesPage() {
   const handleEditCategory = (category: Kategori) => {
     setSelectedCategory(category);
     setCategoryName(category.nama_kategori);
+    
+    // Check if current category is one of the predefined ones
+    const isPredefined = PREDEFINED_CATEGORIES.includes(category.nama_kategori);
+    setIsCustomCategory(!isPredefined);
+    
     setEditDialogOpen(true);
   };
 
@@ -157,15 +180,65 @@ export default function CategoriesPage() {
             <DialogHeader>
               <DialogTitle>Add New Category</DialogTitle>
             </DialogHeader>
-            <input
-              type="text"
-              className="w-full border rounded px-3 py-2 mt-4"
-              placeholder="Category Name"
-              value={categoryName}
-              onChange={e => setCategoryName(e.target.value)}
-            />
+            <div className="space-y-4 mt-4">
+              <div>
+                <label className="text-sm font-medium text-slate-900 block mb-2">
+                  Category Type
+                </label>
+                <Select
+                  value={isCustomCategory ? "custom" : "predefined"}
+                  onValueChange={(value) => {
+                    setIsCustomCategory(value === "custom");
+                    if (value === "predefined") {
+                      setCategoryName("");
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="predefined">Predefined Category</SelectItem>
+                    <SelectItem value="custom">Custom Category</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {isCustomCategory ? (
+                <div>
+                  <label className="text-sm font-medium text-slate-900 block mb-2">
+                    Custom Category Name
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="Enter custom category name"
+                    value={categoryName}
+                    onChange={e => setCategoryName(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="text-sm font-medium text-slate-900 block mb-2">
+                    Select Predefined Category
+                  </label>
+                  <Select value={categoryName} onValueChange={setCategoryName}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PREDEFINED_CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
             <DialogFooter>
-              <Button onClick={handleSaveAdd} disabled={addMutation.isPending}>
+              <Button onClick={handleSaveAdd} disabled={addMutation.isPending || !categoryName.trim()}>
                 Save
               </Button>
             </DialogFooter>
@@ -180,15 +253,69 @@ export default function CategoriesPage() {
             <DialogHeader>
               <DialogTitle>Edit Category</DialogTitle>
             </DialogHeader>
-            <input
-              type="text"
-              className="w-full border rounded px-3 py-2 mt-4"
-              placeholder="Category Name"
-              value={categoryName}
-              onChange={e => setCategoryName(e.target.value)}
-            />
+            <div className="space-y-4 mt-4">
+              <div>
+                <label className="text-sm font-medium text-slate-900 block mb-2">
+                  Category Type
+                </label>
+                <Select
+                  value={isCustomCategory ? "custom" : "predefined"}
+                  onValueChange={(value) => {
+                    setIsCustomCategory(value === "custom");
+                    if (value === "predefined") {
+                      // If switching to predefined, try to find matching predefined category
+                      const matchingPredefined = PREDEFINED_CATEGORIES.find(cat => 
+                        cat.toLowerCase() === categoryName.toLowerCase()
+                      );
+                      setCategoryName(matchingPredefined || "");
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select category type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="predefined">Predefined Category</SelectItem>
+                    <SelectItem value="custom">Custom Category</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {isCustomCategory ? (
+                <div>
+                  <label className="text-sm font-medium text-slate-900 block mb-2">
+                    Custom Category Name
+                  </label>
+                  <input
+                    type="text"
+                    className="w-full border rounded px-3 py-2"
+                    placeholder="Enter custom category name"
+                    value={categoryName}
+                    onChange={e => setCategoryName(e.target.value)}
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="text-sm font-medium text-slate-900 block mb-2">
+                    Select Predefined Category
+                  </label>
+                  <Select value={categoryName} onValueChange={setCategoryName}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PREDEFINED_CATEGORIES.map((category) => (
+                        <SelectItem key={category} value={category}>
+                          {category}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
             <DialogFooter>
-              <Button onClick={handleSaveEdit} disabled={editMutation.isPending}>
+              <Button onClick={handleSaveEdit} disabled={editMutation.isPending || !categoryName.trim()}>
                 Save
               </Button>
             </DialogFooter>

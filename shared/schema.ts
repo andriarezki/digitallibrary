@@ -24,18 +24,20 @@ export const tblKategori = mysqlTable("tbl_kategori", {
   nama_kategori: varchar("nama_kategori", { length: 255 }).notNull(),
 });
 
-export const tblLokasi = mysqlTable("tbl_lokasi", {
-  id_lokasi: int("id_lokasi").primaryKey().autoincrement(),
-  nama_lokasi: varchar("nama_lokasi", { length: 255 }).notNull(),
-  deskripsi: varchar("deskripsi", { length: 255 }),
+// Map tbl_rak (database) to Lokasi interface (UI shows "Locations")
+export const tblLokasi = mysqlTable("tbl_rak", {
+  id_lokasi: int("id_rak").primaryKey().autoincrement(),
+  nama_lokasi: varchar("nama_rak", { length: 255 }).notNull(),
+  deskripsi: varchar("lokasi", { length: 255 }),
   kapasitas: int("kapasitas"),
 });
 
+// Map tbl_buku fields to interface (id_rak maps to id_lokasi in code)
 export const tblBuku = mysqlTable("tbl_buku", {
   id_buku: int("id_buku").primaryKey().autoincrement(),
-  buku_id: varchar("buku_id", { length: 255 }),
-  id_kategori: int("id_kategori"),
-  id_lokasi: int("id_lokasi"),
+  buku_id: varchar("buku_id", { length: 255 }).notNull(),
+  id_kategori: int("id_kategori").notNull(),
+  id_lokasi: int("id_rak").notNull(), // Maps to id_rak in database
   sampul: varchar("sampul", { length: 255 }),
   isbn: varchar("isbn", { length: 255 }),
   lampiran: varchar("lampiran", { length: 255 }),
@@ -46,9 +48,9 @@ export const tblBuku = mysqlTable("tbl_buku", {
   isi: text("isi"),
   jml: int("jml"),
   tgl_masuk: varchar("tgl_masuk", { length: 255 }),
-  tersedia: int("tersedia"),
+  tersedia: int("tersedia").notNull().default(1),
   department: varchar("department", { length: 255 }),
-  file_type: varchar("file_type", { length: 50 }),
+  file_type: varchar("file_type", { length: 10 }), // Added back for server deployment
 });
 
 export const tblUserActivity = mysqlTable("tbl_user_activity", {
@@ -60,9 +62,41 @@ export const tblUserActivity = mysqlTable("tbl_user_activity", {
   user_agent: text("user_agent"),
 });
 
+export const tblPdfViews = mysqlTable("tbl_pdf_views", {
+  id: int("id").primaryKey().autoincrement(),
+  book_id: int("book_id").notNull(),
+  category_id: int("category_id").notNull(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  user_agent: text("user_agent"),
+  view_date: timestamp("view_date").defaultNow().notNull(),
+  user_id: int("user_id"), // Optional: if user is logged in
+});
+
+export const tblSiteVisitors = mysqlTable("tbl_site_visitors", {
+  id: int("id").primaryKey().autoincrement(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  first_visit: timestamp("first_visit").defaultNow().notNull(),
+  last_visit: timestamp("last_visit").defaultNow().notNull(),
+  visit_count: int("visit_count").default(1).notNull(),
+  user_agent: text("user_agent"),
+});
+
 export const insertUserActivitySchema = createInsertSchema(tblUserActivity).pick({
   user_id: true,
   activity_type: true,
+  ip_address: true,
+  user_agent: true,
+});
+
+export const insertPdfViewSchema = createInsertSchema(tblPdfViews).pick({
+  book_id: true,
+  category_id: true,
+  ip_address: true,
+  user_agent: true,
+  user_id: true,
+});
+
+export const insertSiteVisitorSchema = createInsertSchema(tblSiteVisitors).pick({
   ip_address: true,
   user_agent: true,
 });
@@ -120,6 +154,10 @@ export type InsertLokasi = z.infer<typeof insertLokasiSchema>;
 export type Lokasi = typeof tblLokasi.$inferSelect;
 export type InsertBuku = z.infer<typeof insertBukuSchema>;
 export type Buku = typeof tblBuku.$inferSelect;
+export type InsertPdfView = z.infer<typeof insertPdfViewSchema>;
+export type PdfView = typeof tblPdfViews.$inferSelect;
+export type InsertSiteVisitor = z.infer<typeof insertSiteVisitorSchema>;
+export type SiteVisitor = typeof tblSiteVisitors.$inferSelect;
 
 export type BukuWithDetails = Buku & {
   kategori_nama?: string | null;

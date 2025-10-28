@@ -16,6 +16,21 @@ import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { useUser } from "@/context/UserContext";
 
+// Predefined categories list
+const PREDEFINED_CATEGORIES = [
+  "Book",
+  "Journal", 
+  "Proceeding",
+  "Audio Visual",
+  "Catalogue",
+  "Flyer",
+  "Training",
+  "Poster", 
+  "Thesis",
+  "Report",
+  "Newspaper"
+];
+
 interface BooksResponse {
   books: BukuWithDetails[];
   total: number;

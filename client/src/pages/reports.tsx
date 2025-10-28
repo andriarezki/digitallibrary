@@ -12,7 +12,7 @@ type Stats = {
   borrowedBooks: number;
   totalUsers: number;
   totalCategories: number;
-  totalShelves: number;
+  totalLocations: number;
 };
 
 type TopCategory = {
@@ -61,7 +61,7 @@ export default function ReportsPage() {
     doc.text(`Borrowed Books: ${stats.borrowedBooks ?? (stats.totalBooks - stats.availableBooks)}`, 30, 69);
     doc.text(`Total Users: ${stats.totalUsers}`, 30, 76);
     doc.text(`Total Categories: ${stats.totalCategories}`, 30, 83);
-    doc.text(`Total Shelves: ${stats.totalShelves}`, 30, 90);
+    doc.text(`Total Locations: ${stats.totalLocations}`, 30, 90);
 
     doc.setFontSize(14);
     doc.text("Top Categories:", 20, 105);
@@ -108,10 +108,10 @@ export default function ReportsPage() {
             <ul className="mb-4 space-y-1">
               <li>Total Books: <b>{stats?.totalBooks}</b></li>
               <li>Available Books: <b>{stats?.availableBooks}</b></li>
-              <li>Borrowed Books: <b>{stats?.borrowedBooks ?? (stats?.totalBooks - stats?.availableBooks)}</b></li>
+              <li>Borrowed Books: <b>{stats?.borrowedBooks ?? ((stats?.totalBooks || 0) - (stats?.availableBooks || 0))}</b></li>
               <li>Total Users: <b>{stats?.totalUsers}</b></li>
               <li>Total Categories: <b>{stats?.totalCategories}</b></li>
-              <li>Total Shelves: <b>{stats?.totalShelves}</b></li>
+              <li>Total Locations: <b>{stats?.totalLocations}</b></li>
             </ul>
             <h3 className="font-semibold mb-2">Top Categories</h3>
             <ol className="list-decimal list-inside">

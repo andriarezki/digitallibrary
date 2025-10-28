@@ -62,9 +62,14 @@ interface WeeklyBooks {
   booksAdded: number;
 }
 
-interface MonthlyActivity {
-  month: string;
-  activeUsers: number;
+interface DepartmentData {
+  department: string;
+  count: number;
+}
+
+interface MostReadData {
+  category: string;
+  views: number;
 }
 
 export default function DashboardPage() {
@@ -95,38 +100,31 @@ export default function DashboardPage() {
     gcTime: 5 * 60 * 1000, // 5 minutes garbage collection
   });
 
-  // Chart data for library status with soft colors
-  const statusChartData = {
-    labels: ['Available', 'On Loan'],
-    datasets: [
-      {
-        data: [stats?.availableBooks || 0, stats?.onLoan || 0],
-        backgroundColor: [
-          'rgba(34, 197, 94, 0.8)',  // Soft green
-          'rgba(251, 146, 60, 0.8)',  // Soft orange
-        ],
-        borderColor: [
-          'rgba(34, 197, 94, 1)',
-          'rgba(251, 146, 60, 1)',
-        ],
-        borderWidth: 2,
-      },
-    ],
-  };
+  const { data: departmentData, isLoading: departmentLoading } = useQuery<DepartmentData[]>({
+    queryKey: ["/api/dashboard/documents-by-department"],
+    staleTime: 10 * 60 * 1000, // 10 minutes cache
+    gcTime: 20 * 60 * 1000, // 20 minutes garbage collection
+  });
 
-  // Chart data for categories with soft colors
-  const categoryChartData = {
+  const { data: mostReadData, isLoading: mostReadLoading } = useQuery<MostReadData[]>({
+    queryKey: ["/api/dashboard/most-read-by-category"],
+    staleTime: 15 * 60 * 1000, // 15 minutes cache
+    gcTime: 30 * 60 * 1000, // 30 minutes garbage collection
+  });
+
+  // 1. Top 5 Document Collection (Bar Chart)
+  const topDocumentChartData = {
     labels: topCategories?.map(cat => cat.name) || [],
     datasets: [
       {
-        label: 'Books per Category',
+        label: 'Documents',
         data: topCategories?.map(cat => cat.count) || [],
         backgroundColor: [
-          'rgba(59, 130, 246, 0.7)',   // Soft blue
-          'rgba(168, 85, 247, 0.7)',   // Soft purple
-          'rgba(236, 72, 153, 0.7)',   // Soft pink
-          'rgba(34, 197, 94, 0.7)',    // Soft green
-          'rgba(251, 146, 60, 0.7)',   // Soft orange
+          'rgba(59, 130, 246, 0.8)',   // Blue
+          'rgba(168, 85, 247, 0.8)',   // Purple
+          'rgba(236, 72, 153, 0.8)',   // Pink
+          'rgba(34, 197, 94, 0.8)',    // Green
+          'rgba(251, 146, 60, 0.8)',   // Orange
         ],
         borderColor: [
           'rgba(59, 130, 246, 1)',
@@ -136,56 +134,83 @@ export default function DashboardPage() {
           'rgba(251, 146, 60, 1)',
         ],
         borderWidth: 2,
-        borderRadius: 8,
+        borderRadius: 6,
       },
     ],
   };
 
-  // Monthly activity data (real data from API)
-  const monthlyData = {
+  // 2. Documents by Department (Bar Chart)
+  const departmentChartData = {
+    labels: departmentData?.map(dept => dept.department) || [],
+    datasets: [
+      {
+        label: 'Documents',
+        data: departmentData?.map(dept => dept.count) || [],
+        backgroundColor: [
+          'rgba(34, 197, 94, 0.8)',    // Green
+          'rgba(59, 130, 246, 0.8)',   // Blue
+          'rgba(168, 85, 247, 0.8)',   // Purple
+          'rgba(251, 146, 60, 0.8)',   // Orange
+          'rgba(236, 72, 153, 0.8)',   // Pink
+          'rgba(14, 165, 233, 0.8)',   // Sky blue
+          'rgba(139, 69, 19, 0.8)',    // Brown
+        ],
+        borderColor: [
+          'rgba(34, 197, 94, 1)',
+          'rgba(59, 130, 246, 1)',
+          'rgba(168, 85, 247, 1)',
+          'rgba(251, 146, 60, 1)',
+          'rgba(236, 72, 153, 1)',
+          'rgba(14, 165, 233, 1)',
+          'rgba(139, 69, 19, 1)',
+        ],
+        borderWidth: 2,
+        borderRadius: 6,
+      },
+    ],
+  };
+
+  // 3. Site Visitor (Line Chart)
+  const siteVisitorData = {
     labels: monthlyActivity?.map(data => data.month) || ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun'],
     datasets: [
       {
-        label: 'Active Users',
+        label: 'Site Visitors',
         data: monthlyActivity?.map(data => data.activeUsers) || [0, 0, 0, 0, 0, 0],
-        borderColor: 'rgba(34, 197, 94, 0.8)',
+        borderColor: 'rgba(34, 197, 94, 0.9)',
         backgroundColor: 'rgba(34, 197, 94, 0.1)',
         borderWidth: 3,
         fill: true,
         tension: 0.4,
+        pointBackgroundColor: 'rgba(34, 197, 94, 1)',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 2,
+        pointRadius: 5,
       },
     ],
   };
 
-  // Books added by category data (real data from API)
-  const weeklyBooksData = {
-    labels: weeklyBooks?.map(data => data.week) || ['Category 1', 'Category 2', 'Category 3', 'Category 4', 'Category 5', 'Category 6', 'Category 7', 'Category 8'],
+  // 4. Most Read by Category (Doughnut Chart)
+  const mostReadChartData = {
+    labels: mostReadData?.map(data => data.category) || [],
     datasets: [
       {
-        label: 'Books Added by Category',
-        data: weeklyBooks?.map(data => data.booksAdded) || [0, 0, 0, 0, 0, 0, 0, 0],
+        data: mostReadData?.map(data => data.views) || [],
         backgroundColor: [
+          'rgba(59, 130, 246, 0.8)',   // Blue
           'rgba(168, 85, 247, 0.8)',   // Purple
           'rgba(236, 72, 153, 0.8)',   // Pink
-          'rgba(59, 130, 246, 0.8)',   // Blue
           'rgba(34, 197, 94, 0.8)',    // Green
           'rgba(251, 146, 60, 0.8)',   // Orange
-          'rgba(168, 85, 247, 0.8)',   // Purple (repeat for more categories)
-          'rgba(236, 72, 153, 0.8)',   // Pink
-          'rgba(59, 130, 246, 0.8)',   // Blue
         ],
         borderColor: [
+          'rgba(59, 130, 246, 1)',
           'rgba(168, 85, 247, 1)',
           'rgba(236, 72, 153, 1)',
-          'rgba(59, 130, 246, 1)',
           'rgba(34, 197, 94, 1)',
           'rgba(251, 146, 60, 1)',
-          'rgba(168, 85, 247, 1)',
-          'rgba(236, 72, 153, 1)',
-          'rgba(59, 130, 246, 1)',
         ],
         borderWidth: 2,
-        borderRadius: 8,
       },
     ],
   };
@@ -264,44 +289,6 @@ export default function DashboardPage() {
     },
   };
 
-  // Doughnut chart specific options (no scales for Collection Status)
-  const doughnutChartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: {
-      duration: 300, // Very fast animation for doughnut
-      easing: 'easeOutQuad' as const,
-    },
-    plugins: {
-      legend: {
-        position: 'bottom' as const,
-        labels: {
-          padding: 15, // Reduced padding
-          usePointStyle: true,
-          font: {
-            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
-            size: 11, // Slightly smaller font
-            weight: 500,
-          },
-          color: 'rgb(71, 85, 105)', // slate-600
-        },
-      },
-      tooltip: {
-        titleFont: {
-          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
-          size: 12, // Reduced font size
-          weight: 600,
-        },
-        bodyFont: {
-          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
-          size: 11, // Reduced font size
-          weight: 'normal' as const,
-        },
-      },
-    },
-    // No scales property for doughnut chart - this removes x and y axis
-  };
-
   const barChartOptions = {
     responsive: true,
     maintainAspectRatio: false,
@@ -367,11 +354,50 @@ export default function DashboardPage() {
     },
   };
 
+  // Doughnut chart options for Most Read by Category
+  const doughnutChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: {
+      duration: 400,
+      easing: 'easeOutQuart' as const,
+    },
+    plugins: {
+      legend: {
+        position: 'bottom' as const,
+        labels: {
+          padding: 15,
+          usePointStyle: true,
+          font: {
+            family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+            size: 11,
+            weight: 500,
+          },
+          color: 'rgb(71, 85, 105)',
+        },
+      },
+      tooltip: {
+        titleFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 12,
+          weight: 600,
+        },
+        bodyFont: {
+          family: 'Poppins, -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif',
+          size: 11,
+          weight: 'normal' as const,
+        },
+      },
+    },
+  };
+
   const handleRefresh = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/top-categories"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/monthly-activity"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/weekly-books"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/documents-by-department"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/dashboard/most-read-by-category"] });
     toast({
       title: "Data refreshed",
       description: "Dashboard data has been updated",
@@ -492,195 +518,67 @@ export default function DashboardPage() {
           </Card>
         </div>
 
-        {/* Charts Section */}
+        {/* Charts Section - 4 Charts in 2x2 Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* Book Status Doughnut Chart */}
+          {/* 1. Top 5 Document Collection (Bar Chart) */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Collection Status</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {statsLoading ? (
-                <Skeleton className="h-64 w-full" />
-              ) : (
-                <div className="h-64">
-                  <Doughnut data={statusChartData} options={doughnutChartOptions} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Categories Bar Chart */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Top Categories</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Top 5 Document Collection</CardTitle>
             </CardHeader>
             <CardContent>
               {categoriesLoading ? (
                 <Skeleton className="h-64 w-full" />
               ) : (
                 <div className="h-64">
-                  <Bar data={categoryChartData} options={barChartOptions} />
+                  <Bar data={topDocumentChartData} options={barChartOptions} />
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Monthly User Activity Line Chart */}
+          {/* 2. Documents by Department (Bar Chart) */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Monthly User Activity</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Documents by Department</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {departmentLoading ? (
+                <Skeleton className="h-64 w-full" />
+              ) : (
+                <div className="h-64">
+                  <Bar data={departmentChartData} options={barChartOptions} />
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 3. Site Visitor (Line Chart) */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-slate-800">Site Visitor Activity</CardTitle>
             </CardHeader>
             <CardContent>
               {activityLoading ? (
                 <Skeleton className="h-64 w-full" />
               ) : (
                 <div className="h-64">
-                  <Line data={monthlyData} options={chartOptions} />
+                  <Line data={siteVisitorData} options={chartOptions} />
                 </div>
               )}
             </CardContent>
           </Card>
 
-          {/* Books Added by Category Bar Chart */}
+          {/* 4. Most Read by Category (Doughnut Chart) */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Books Added by Category</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Most Read by Category</CardTitle>
             </CardHeader>
             <CardContent>
-              {weeklyBooksLoading ? (
+              {mostReadLoading ? (
                 <Skeleton className="h-64 w-full" />
               ) : (
                 <div className="h-64">
-                  <Bar data={weeklyBooksData} options={barChartOptions} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Detailed Lists */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Top 5 Book Categories</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {categoriesLoading ? (
-                <div className="space-y-3">
-                  {[...Array(5)].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <Skeleton className="h-4 w-24" />
-                      <Skeleton className="h-4 w-12" />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {topCategories?.map((category, index) => (
-                    <div key={category.id} className="flex items-center justify-between p-3 rounded-lg bg-gradient-to-r from-slate-50 to-white border border-slate-100">
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-medium ${
-                          index === 0 ? 'bg-blue-500' :
-                          index === 1 ? 'bg-purple-500' :
-                          index === 2 ? 'bg-pink-500' :
-                          index === 3 ? 'bg-green-500' : 'bg-orange-500'
-                        }`}>
-                          {index + 1}
-                        </div>
-                        <span className="font-medium text-slate-900">{category.name}</span>
-                      </div>
-                      <span className="text-sm text-slate-600 font-medium bg-slate-100 px-3 py-1 rounded-full">
-                        {category.count.toLocaleString()} books
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Library Analytics</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {statsLoading ? (
-                <div className="space-y-4">
-                  <Skeleton className="h-24 w-full" />
-                  <Skeleton className="h-24 w-full" />
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg border border-green-100">
-                    <h4 className="font-medium text-slate-900 mb-3 flex items-center">
-                      <CheckCircle className="w-5 h-5 text-green-600 mr-2" />
-                      Collection Health
-                    </h4>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-600">Available Books:</span>
-                        <div className="flex items-center space-x-2">
-                          <div className="w-16 bg-gray-200 rounded-full h-2">
-                            <div 
-                              className="bg-green-600 h-2 rounded-full" 
-                              style={{ width: `${((stats?.availableBooks || 0) / (stats?.totalBooks || 1) * 100)}%` }}
-                            ></div>
-                          </div>
-                          <span className="font-medium text-green-600 text-sm">
-                            {((stats?.availableBooks || 0) / (stats?.totalBooks || 1) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-600">Books on Loan:</span>
-                        <div className="flex items-center space-x-2">
-                          <div className="w-16 bg-gray-200 rounded-full h-2">
-                            <div 
-                              className="bg-orange-500 h-2 rounded-full" 
-                              style={{ width: `${((stats?.onLoan || 0) / (stats?.totalBooks || 1) * 100)}%` }}
-                            ></div>
-                          </div>
-                          <span className="font-medium text-orange-600 text-sm">
-                            {((stats?.onLoan || 0) / (stats?.totalBooks || 1) * 100).toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg border border-blue-100">
-                    <h4 className="font-medium text-slate-900 mb-3 flex items-center">
-                      <Tags className="w-5 h-5 text-blue-600 mr-2" />
-                      Quick Statistics
-                    </h4>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div className="text-center p-2 bg-white rounded-lg">
-                        <span className="text-slate-600 block">Avg. per category</span>
-                        <p className="font-bold text-lg text-blue-600">
-                          {Math.round((stats?.totalBooks || 0) / (stats?.categories || 1))}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 bg-white rounded-lg">
-                        <span className="text-slate-600 block">Collection size</span>
-                        <p className="font-bold text-lg text-purple-600">Large</p>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4 text-sm mt-4">
-                      <div className="text-center p-2 bg-white rounded-lg">
-                        <span className="text-slate-600 block">Site Visitors</span>
-                        <p className="font-bold text-lg text-green-600">
-                          {stats?.siteVisitorCount ?? 0}
-                        </p>
-                      </div>
-                      <div className="text-center p-2 bg-white rounded-lg">
-                        <span className="text-slate-600 block">PDF Views</span>
-                        <p className="font-bold text-lg text-green-600">
-                          {stats?.pdfViewCount ?? 0}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
+                  <Doughnut data={mostReadChartData} options={doughnutChartOptions} />
                 </div>
               )}
             </CardContent>

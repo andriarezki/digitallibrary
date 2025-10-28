@@ -1,11 +1,11 @@
 import { db } from "./db";
-import { tblLogin, tblBuku, tblKategori, tblLokasi, tblUserActivity, type Login, type Buku, type BukuWithDetails, type Kategori, type Lokasi, type InsertBuku, type UserActivity } from "@shared/schema";
+import { tblLogin, tblBuku, tblKategori, tblLokasi, tblUserActivity, tblPdfViews, tblSiteVisitors, type Login, type Buku, type BukuWithDetails, type Kategori, type Lokasi, type InsertBuku, type UserActivity, type PdfView, type SiteVisitor, type InsertPdfView, type InsertSiteVisitor } from "@shared/schema";
 import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
-// Visitor and PDF view counters (in-memory, resets on server restart)
-let siteVisitorCount = 0;
-let pdfViewCount = 0;
+// IP-based visitor tracking (in-memory, resets on server restart)
+const siteVisitorIPs = new Set<string>();
+const pdfViewIPs = new Set<string>();
 
 // Simple in-memory cache for dashboard data (5-minute expiry)
 const cache = new Map<string, { data: any; expiry: number }>();
@@ -24,14 +24,63 @@ function setCachedData(key: string, data: any): void {
   cache.set(key, { data, expiry: Date.now() + CACHE_DURATION });
 }
 
-export function incrementSiteVisitor() {
-  siteVisitorCount++;
+export function incrementSiteVisitor(ip: string) {
+  siteVisitorIPs.add(ip);
 }
-export function incrementPdfView() {
-  pdfViewCount++;
+export function incrementPdfView(ip: string) {
+  pdfViewIPs.add(ip);
 }
 export function getVisitorStats() {
-  return { siteVisitorCount, pdfViewCount };
+  return { 
+    siteVisitorCount: siteVisitorIPs.size, 
+    pdfViewCount: pdfViewIPs.size 
+  };
+}
+
+// Database-based PDF view tracking
+export async function recordPdfView(bookId: number, categoryId: number, ip: string, userAgent?: string, userId?: number) {
+  try {
+    await db.insert(tblPdfViews).values({
+      book_id: bookId,
+      category_id: categoryId,
+      ip_address: ip,
+      user_agent: userAgent,
+      user_id: userId
+    });
+  } catch (error) {
+    console.error('Error recording PDF view:', error);
+  }
+}
+
+// Database-based site visitor tracking
+export async function recordSiteVisitor(ip: string, userAgent?: string) {
+  try {
+    // Try to update existing visitor
+    const existingVisitor = await db
+      .select()
+      .from(tblSiteVisitors)
+      .where(eq(tblSiteVisitors.ip_address, ip))
+      .limit(1);
+
+    if (existingVisitor.length > 0) {
+      // Update existing visitor
+      await db
+        .update(tblSiteVisitors)
+        .set({
+          last_visit: new Date(),
+          visit_count: sql`visit_count + 1`
+        })
+        .where(eq(tblSiteVisitors.ip_address, ip));
+    } else {
+      // Insert new visitor
+      await db.insert(tblSiteVisitors).values({
+        ip_address: ip,
+        user_agent: userAgent
+      });
+    }
+  } catch (error) {
+    console.error('Error recording site visitor:', error);
+  }
 }
 
 export interface IStorage {
@@ -57,6 +106,7 @@ export interface IStorage {
   getCategories(): Promise<Kategori[]>;
   getCategoryById(id: number): Promise<Kategori | undefined>;
   createCategory(data: { nama_kategori: string }): Promise<Kategori>;
+  ensurePredefinedCategories(): Promise<void>;
   updateCategory(id: number, data: { nama_kategori: string }): Promise<void>;
   deleteCategory(id: number): Promise<boolean>;
   getTopCategories(limit: number): Promise<Array<{ id: number; name: string; count: number }>>;
@@ -70,11 +120,17 @@ export interface IStorage {
 
   // Departments methods
   getDepartments(): Promise<Array<{ department: string }>>;
+  getDocumentsByDepartment(): Promise<Array<{ department: string; count: number }>>;
+  getMostReadByCategory(): Promise<Array<{ category: string; views: number }>>;
 
   // User Activity methods
   logUserActivity(userId: number, activityType: string, ipAddress?: string, userAgent?: string): Promise<void>;
   getMonthlyUserActivity(): Promise<Array<{ month: string; activeUsers: number }>>;
   getWeeklyBooksAdded(): Promise<Array<{ week: string; booksAdded: number }>>;
+
+  // Analytics methods (database-based)
+  getDatabaseVisitorStats(): Promise<{ siteVisitorCount: number; pdfViewCount: number; uniquePdfViewers: number }>;
+  getTopCategoriesByViews(): Promise<Array<{ category: string; views: number }>>;
 
   // Dashboard stats
   getDashboardStats(): Promise<{
@@ -271,7 +327,7 @@ export class DatabaseStorage implements IStorage {
         tgl_masuk: tblBuku.tgl_masuk,
         tersedia: tblBuku.tersedia,
         department: tblBuku.department,
-        file_type: tblBuku.file_type,
+        file_type: tblBuku.file_type, // Restored - column exists on server
         kategori_nama: tblKategori.nama_kategori,
         lokasi_nama: tblLokasi.nama_lokasi,
       })
@@ -430,6 +486,34 @@ export class DatabaseStorage implements IStorage {
     return newCategory[0];
   }
 
+  async ensurePredefinedCategories(): Promise<void> {
+    const predefinedCategories = [
+      "Book",
+      "Journal", 
+      "Proceeding",
+      "Audio Visual",
+      "Catalogue",
+      "Flyer",
+      "Training",
+      "Poster", 
+      "Thesis",
+      "Report",
+      "Newspaper"
+    ];
+
+    // Get existing categories
+    const existingCategories = await this.getCategories();
+    const existingNames = new Set(existingCategories.map(cat => cat.nama_kategori.toLowerCase()));
+
+    // Create missing predefined categories
+    for (const categoryName of predefinedCategories) {
+      if (!existingNames.has(categoryName.toLowerCase())) {
+        await this.createCategory({ nama_kategori: categoryName });
+        console.log(`Created predefined category: ${categoryName}`);
+      }
+    }
+  }
+
   async deleteCategory(id: number): Promise<boolean> {
     const result = await db.delete(tblKategori)
       .where(eq(tblKategori.id_kategori, id));
@@ -504,8 +588,8 @@ export class DatabaseStorage implements IStorage {
       // Update visitor counts in real-time
       return {
         ...cached,
-        siteVisitorCount,
-        pdfViewCount
+        siteVisitorCount: siteVisitorIPs.size,
+        pdfViewCount: pdfViewIPs.size
       };
     }
 
@@ -525,8 +609,8 @@ export class DatabaseStorage implements IStorage {
       availableBooks,
       onLoan,
       categories,
-      siteVisitorCount,
-      pdfViewCount
+      siteVisitorCount: siteVisitorIPs.size,
+      pdfViewCount: pdfViewIPs.size
     };
 
     setCachedData(cacheKey, stats);
@@ -543,6 +627,57 @@ export class DatabaseStorage implements IStorage {
     return results.filter(r => r.department) as Array<{ department: string }>;
   }
 
+  async getDocumentsByDepartment(): Promise<Array<{ department: string; count: number }>> {
+    const results = await db
+      .select({
+        department: tblBuku.department,
+        count: count(tblBuku.id_buku),
+      })
+      .from(tblBuku)
+      .where(sql`${tblBuku.department} IS NOT NULL AND ${tblBuku.department} != ''`)
+      .groupBy(tblBuku.department)
+      .orderBy(desc(count(tblBuku.id_buku)));
+    
+    return results.filter(r => r.department) as Array<{ department: string; count: number }>;
+  }
+
+  async getMostReadByCategory(): Promise<Array<{ category: string; views: number }>> {
+    // Use actual PDF view data from database if available, otherwise fall back to book count
+    try {
+      const pdfViewResults = await db
+        .select({
+          category: tblKategori.nama_kategori,
+          views: count(tblPdfViews.id),
+        })
+        .from(tblPdfViews)
+        .innerJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori))
+        .groupBy(tblKategori.id_kategori, tblKategori.nama_kategori)
+        .orderBy(desc(count(tblPdfViews.id)))
+        .limit(5);
+      
+      // If we have PDF view data, use it
+      if (pdfViewResults.length > 0) {
+        return pdfViewResults.filter(r => r.category) as Array<{ category: string; views: number }>;
+      }
+    } catch (error) {
+      console.log('PDF views table not available, falling back to book count');
+    }
+
+    // Fallback to book count per category as proxy for "most read"
+    const results = await db
+      .select({
+        category: tblKategori.nama_kategori,
+        views: count(tblBuku.id_buku),
+      })
+      .from(tblKategori)
+      .leftJoin(tblBuku, eq(tblKategori.id_kategori, tblBuku.id_kategori))
+      .groupBy(tblKategori.id_kategori, tblKategori.nama_kategori)
+      .orderBy(desc(count(tblBuku.id_buku)))
+      .limit(5);
+    
+    return results.filter(r => r.category) as Array<{ category: string; views: number }>;
+  }
+
   async logUserActivity(userId: number, activityType: string, ipAddress?: string, userAgent?: string): Promise<void> {
     await db.insert(tblUserActivity).values({
       user_id: userId,
@@ -554,56 +689,70 @@ export class DatabaseStorage implements IStorage {
 
   async getMonthlyUserActivity(): Promise<Array<{ month: string; activeUsers: number }>> {
     try {
-      // Check if user activity table exists
+      // Check if site visitors table exists (IP-based tracking)
       const tableCheck = await db.execute(sql`
         SELECT COUNT(*) as count 
         FROM information_schema.tables 
         WHERE table_schema = DATABASE() 
-        AND table_name = 'tbl_user_activity'
+        AND table_name = 'tbl_site_visitors'
       `);
 
-      // If table doesn't exist, return mock data for now
+      // If table doesn't exist, return sample data
       if (!tableCheck[0] || (tableCheck[0] as any).count === 0) {
-        console.log('User activity table not found, returning sample data');
+        console.log('Site visitors table not found, returning sample data');
         return [
-          { month: 'May', activeUsers: 5 },
-          { month: 'Jun', activeUsers: 8 },
-          { month: 'Jul', activeUsers: 12 },
-          { month: 'Aug', activeUsers: 15 },
-          { month: 'Sep', activeUsers: 18 },
-          { month: 'Oct', activeUsers: 22 }
+          { month: 'May', activeUsers: 15 },
+          { month: 'Jun', activeUsers: 28 },
+          { month: 'Jul', activeUsers: 42 },
+          { month: 'Aug', activeUsers: 35 },
+          { month: 'Sep', activeUsers: 58 },
+          { month: 'Oct', activeUsers: 67 }
         ];
       }
 
-      // Get user activity for the last 6 months
+      // Get unique IP visitors for the last 6 months
       const sixMonthsAgo = new Date();
       sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
 
       const results = await db
         .select({
-          month: sql<string>`DATE_FORMAT(activity_date, '%Y-%m')`,
-          activeUsers: sql<number>`COUNT(DISTINCT user_id)`
+          month: sql<string>`DATE_FORMAT(first_visit, '%Y-%m')`,
+          activeUsers: sql<number>`COUNT(DISTINCT ip_address)` // Count unique IP addresses instead of user_id
         })
-        .from(tblUserActivity)
-        .where(sql`activity_date >= ${sixMonthsAgo}`)
-        .groupBy(sql`DATE_FORMAT(activity_date, '%Y-%m')`)
-        .orderBy(sql`DATE_FORMAT(activity_date, '%Y-%m')`);
+        .from(tblSiteVisitors)
+        .where(sql`first_visit >= ${sixMonthsAgo.toISOString().split('T')[0]}`)
+        .groupBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`)
+        .orderBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`);
 
-      // Format month names for display
-      return results.map(result => ({
-        month: new Date(result.month + '-01').toLocaleString('default', { month: 'short' }),
-        activeUsers: result.activeUsers
-      }));
+      // Convert to month names and ensure we have data for the last 6 months
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const currentDate = new Date();
+      const monthlyData: Array<{ month: string; activeUsers: number }> = [];
+
+      for (let i = 5; i >= 0; i--) {
+        const date = new Date(currentDate);
+        date.setMonth(date.getMonth() - i);
+        const yearMonth = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+        const monthName = monthNames[date.getMonth()];
+        
+        const result = results.find(r => r.month === yearMonth);
+        monthlyData.push({
+          month: monthName,
+          activeUsers: result ? result.activeUsers : 0
+        });
+      }
+
+      return monthlyData;
     } catch (error) {
-      console.error('Error fetching monthly user activity:', error);
+      console.error('Error fetching monthly visitor activity:', error);
       // Return sample data if there's an error
       return [
-        { month: 'May', activeUsers: 5 },
-        { month: 'Jun', activeUsers: 8 },
-        { month: 'Jul', activeUsers: 12 },
-        { month: 'Aug', activeUsers: 15 },
-        { month: 'Sep', activeUsers: 18 },
-        { month: 'Oct', activeUsers: 22 }
+        { month: 'May', activeUsers: 15 },
+        { month: 'Jun', activeUsers: 28 },
+        { month: 'Jul', activeUsers: 42 },
+        { month: 'Aug', activeUsers: 35 },
+        { month: 'Sep', activeUsers: 58 },
+        { month: 'Oct', activeUsers: 67 }
       ];
     }
   }
@@ -659,6 +808,48 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error('Error fetching weekly books data:', error);
       // Return empty array if there's an error
+      return [];
+    }
+  }
+
+  async getDatabaseVisitorStats(): Promise<{ siteVisitorCount: number; pdfViewCount: number; uniquePdfViewers: number }> {
+    try {
+      const [siteVisitors, pdfViews, uniquePdfViewers] = await Promise.all([
+        // Count unique site visitors
+        db.select({ count: count() }).from(tblSiteVisitors),
+        // Count total PDF views
+        db.select({ count: count() }).from(tblPdfViews),
+        // Count unique PDF viewers (distinct IPs that viewed PDFs)
+        db.select({ count: count(sql`DISTINCT ${tblPdfViews.ip_address}`) }).from(tblPdfViews)
+      ]);
+
+      return {
+        siteVisitorCount: siteVisitors[0]?.count || 0,
+        pdfViewCount: pdfViews[0]?.count || 0,
+        uniquePdfViewers: uniquePdfViewers[0]?.count || 0
+      };
+    } catch (error) {
+      console.error('Error fetching database visitor stats:', error);
+      return { siteVisitorCount: 0, pdfViewCount: 0, uniquePdfViewers: 0 };
+    }
+  }
+
+  async getTopCategoriesByViews(): Promise<Array<{ category: string; views: number }>> {
+    try {
+      const results = await db
+        .select({
+          category: tblKategori.nama_kategori,
+          views: count(tblPdfViews.id),
+        })
+        .from(tblPdfViews)
+        .innerJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori))
+        .groupBy(tblKategori.id_kategori, tblKategori.nama_kategori)
+        .orderBy(desc(count(tblPdfViews.id)))
+        .limit(10);
+      
+      return results.filter(r => r.category) as Array<{ category: string; views: number }>;
+    } catch (error) {
+      console.error('Error fetching top categories by views:', error);
       return [];
     }
   }

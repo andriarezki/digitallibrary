@@ -15,7 +15,7 @@ const LoginPage = lazy(() => import("@/pages/login"));
 const DashboardPage = lazy(() => import("@/pages/dashboard"));
 const BooksPage = lazy(() => import("@/pages/books"));
 const CategoriesPage = lazy(() => import("@/pages/categories"));
-// const LocationsPage = lazy(() => import("@/pages/locations"));
+const LocationsPage = lazy(() => import("@/pages/locations"));
 const LoansPage = lazy(() => import("@/pages/loans"));
 const UsersPage = lazy(() => import("@/pages/users"));
 const ReportsPage = lazy(() => import("@/pages/reports"));
@@ -80,7 +80,7 @@ function AppContent() {
             <Route path="/" component={DashboardPage} />
             <Route path="/books" component={BooksPage} />
             <Route path="/categories" component={CategoriesPage} />
-            {/* <Route path="/locations" component={LocationsPage} /> */}
+            <Route path="/locations" component={LocationsPage} />
             <Route path="/loans" component={LoansPage} />
             <Route path="/users" component={UsersPage} />
             <Route path="/reports" component={ReportsPage} />

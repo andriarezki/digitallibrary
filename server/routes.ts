@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertLoginSchema, insertBukuSchema, updateBukuSchema } from "@shared/schema";
 import express from "express";
-import { incrementSiteVisitor, incrementPdfView } from "./storage";
+import { incrementSiteVisitor, incrementPdfView, recordPdfView, recordSiteVisitor } from "./storage";
 import session from "express-session";
 import multer from "multer";
 import path from "path";
@@ -16,6 +16,17 @@ declare module 'express-session' {
     userId?: number;
     user?: any;
   }
+}
+
+// Helper function to get client IP address
+function getClientIP(req: express.Request): string {
+  return req.ip || 
+         req.connection.remoteAddress || 
+         req.socket.remoteAddress || 
+         (req.connection as any)?.socket?.remoteAddress || 
+         req.headers['x-forwarded-for']?.toString().split(',')[0] || 
+         req.headers['x-real-ip']?.toString() || 
+         '127.0.0.1';
 }
 
 const storageConfig = multer.diskStorage({
@@ -64,9 +75,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     next();
   }, express.static(path.join(process.cwd(), 'client/public/fonts')));
 
-  // Count PDF views
-  app.use('/api/pdfs', (req, res, next) => { incrementPdfView(); next(); }, express.static(path.join(process.cwd(), 'pdfs')));
-  app.use('/pdfs', (req, res, next) => { incrementPdfView(); next(); }, express.static(path.join(process.cwd(), 'pdfs')));
+  // Database-based PDF view tracking middleware
+  const trackPdfView = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    try {
+      const filename = req.params.filename || path.basename(req.path);
+      
+      // Extract book ID from filename (assuming format like "book_123.pdf" or just "123.pdf")
+      const bookIdMatch = filename.match(/(?:book_)?(\d+)\.pdf$/i);
+      if (bookIdMatch) {
+        const bookId = parseInt(bookIdMatch[1]);
+        
+        // Get book details to find category
+        const book = await storage.getBookById(bookId);
+        if (book && book.id_kategori) {
+          // Record the view in database
+          await recordPdfView(
+            bookId,
+            book.id_kategori,
+            getClientIP(req),
+            req.headers['user-agent'],
+            req.session.userId
+          );
+        }
+      }
+      
+      // Also increment the legacy counter for backward compatibility
+      incrementPdfView(getClientIP(req));
+    } catch (error) {
+      console.error('Error tracking PDF view:', error);
+    }
+    next();
+  };
+
+  // Count PDF views (with database tracking)
+  app.use('/api/pdfs', trackPdfView, express.static(path.join(process.cwd(), 'pdfs')));
+  app.use('/pdfs', trackPdfView, express.static(path.join(process.cwd(), 'pdfs')));
 
   // Custom handler to serve PDFs inline
   app.get(['/pdfs/:filename', '/api/pdfs/:filename'], (req, res) => {
@@ -79,8 +122,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
     fs.createReadStream(filePath).pipe(res);
   });
 
-  // Count site visitors (simple: increments on every dashboard page API call)
-  app.get("/api/dashboard/stats", requireAuth, async (req, res, next) => { incrementSiteVisitor(); next(); });
+  // Count site visitors (database + legacy tracking)
+  app.get("/api/dashboard/stats", requireAuth, async (req, res, next) => { 
+    const ip = getClientIP(req);
+    incrementSiteVisitor(ip); // Legacy counter
+    try {
+      await recordSiteVisitor(ip, req.headers['user-agent']); // Database tracking
+    } catch (error) {
+      console.log('Site visitor recording disabled (tables not ready)');
+    }
+    next(); 
+  });
 
   // Login
   app.post("/api/auth/login", async (req, res) => {
@@ -187,6 +239,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Documents by department for chart
+  app.get("/api/dashboard/documents-by-department", requireAuth, async (req, res) => {
+    try {
+      const departmentData = await storage.getDocumentsByDepartment();
+      res.json(departmentData);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch documents by department" });
+    }
+  });
+
+  // Most read by category for chart
+  app.get("/api/dashboard/most-read-by-category", requireAuth, async (req, res) => {
+    try {
+      const mostReadData = await storage.getMostReadByCategory();
+      res.json(mostReadData);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch most read by category" });
+    }
+  });
+
+  // New endpoint for database-based visitor stats
+  app.get("/api/dashboard/database-stats", requireAuth, async (req, res) => {
+    try {
+      const dbStats = await storage.getDatabaseVisitorStats();
+      res.json(dbStats);
+    } catch (error) {
+      console.error('Error fetching database stats:', error);
+      res.status(500).json({ message: "Failed to fetch database stats" });
+    }
+  });
+
+  // New endpoint for top categories by actual views
+  app.get("/api/dashboard/top-categories-by-views", requireAuth, async (req, res) => {
+    try {
+      const topCategories = await storage.getTopCategoriesByViews();
+      res.json(topCategories);
+    } catch (error) {
+      console.error('Error fetching top categories by views:', error);
+      res.status(500).json({ message: "Failed to fetch top categories by views" });
+    }
+  });
+
   // Books routes
   app.get("/api/books", requireAuth, async (req, res) => {
     try {
@@ -198,9 +292,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const departmentFilter = req.query.departmentFilter as string;
       const yearFilter = req.query.yearFilter as string;
 
+      console.log('Fetching books with params:', { page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter });
       const result = await storage.getBooks(page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter);
+      console.log('Successfully fetched books:', result.books.length, 'total:', result.total);
       res.json(result);
     } catch (error) {
+      console.error('Error fetching books:', error);
       res.status(500).json({ message: "Failed to fetch books" });
     }
   });
@@ -406,12 +503,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Initialize predefined categories (admin only)
+  app.post("/api/categories/init-predefined", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can initialize predefined categories" });
+    }
+    try {
+      await storage.ensurePredefinedCategories();
+      res.json({ message: "Predefined categories initialized successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to initialize predefined categories" });
+    }
+  });
+
   // Locations routes
   app.get("/api/locations", requireAuth, async (req, res) => {
     try {
+      console.log('Fetching locations from database...');
       const locations = await storage.getLocations();
+      console.log('Successfully fetched locations:', locations.length);
       res.json(locations);
     } catch (error) {
+      console.error('Error fetching locations:', error);
       res.status(500).json({ message: "Failed to fetch locations" });
     }
   });

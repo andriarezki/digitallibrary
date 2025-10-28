@@ -21,12 +21,16 @@ __export(schema_exports, {
   insertBukuSchema: () => insertBukuSchema,
   insertKategoriSchema: () => insertKategoriSchema,
   insertLoginSchema: () => insertLoginSchema,
-  insertRakSchema: () => insertRakSchema,
+  insertLokasiSchema: () => insertLokasiSchema,
+  insertPdfViewSchema: () => insertPdfViewSchema,
+  insertSiteVisitorSchema: () => insertSiteVisitorSchema,
   insertUserActivitySchema: () => insertUserActivitySchema,
   tblBuku: () => tblBuku,
   tblKategori: () => tblKategori,
   tblLogin: () => tblLogin,
-  tblRak: () => tblRak,
+  tblLokasi: () => tblLokasi,
+  tblPdfViews: () => tblPdfViews,
+  tblSiteVisitors: () => tblSiteVisitors,
   tblUserActivity: () => tblUserActivity,
   updateBukuSchema: () => updateBukuSchema
 });
@@ -53,17 +57,18 @@ var tblKategori = mysqlTable("tbl_kategori", {
   id_kategori: int("id_kategori").primaryKey().autoincrement(),
   nama_kategori: varchar("nama_kategori", { length: 255 }).notNull()
 });
-var tblRak = mysqlTable("tbl_rak", {
-  id_rak: int("id_rak").primaryKey().autoincrement(),
-  nama_rak: varchar("nama_rak", { length: 255 }).notNull(),
-  lokasi: varchar("lokasi", { length: 255 }),
+var tblLokasi = mysqlTable("tbl_rak", {
+  id_lokasi: int("id_rak").primaryKey().autoincrement(),
+  nama_lokasi: varchar("nama_rak", { length: 255 }).notNull(),
+  deskripsi: varchar("lokasi", { length: 255 }),
   kapasitas: int("kapasitas")
 });
 var tblBuku = mysqlTable("tbl_buku", {
   id_buku: int("id_buku").primaryKey().autoincrement(),
-  buku_id: varchar("buku_id", { length: 255 }),
-  id_kategori: int("id_kategori"),
-  id_rak: int("id_rak"),
+  buku_id: varchar("buku_id", { length: 255 }).notNull(),
+  id_kategori: int("id_kategori").notNull(),
+  id_lokasi: int("id_rak").notNull(),
+  // Maps to id_rak in database
   sampul: varchar("sampul", { length: 255 }),
   isbn: varchar("isbn", { length: 255 }),
   lampiran: varchar("lampiran", { length: 255 }),
@@ -74,8 +79,10 @@ var tblBuku = mysqlTable("tbl_buku", {
   isi: text("isi"),
   jml: int("jml"),
   tgl_masuk: varchar("tgl_masuk", { length: 255 }),
-  tersedia: int("tersedia"),
-  department: varchar("department", { length: 255 })
+  tersedia: int("tersedia").notNull().default(1),
+  department: varchar("department", { length: 255 }),
+  file_type: varchar("file_type", { length: 10 })
+  // Added back for server deployment
 });
 var tblUserActivity = mysqlTable("tbl_user_activity", {
   id: int("id").primaryKey().autoincrement(),
@@ -86,9 +93,38 @@ var tblUserActivity = mysqlTable("tbl_user_activity", {
   ip_address: varchar("ip_address", { length: 45 }),
   user_agent: text("user_agent")
 });
+var tblPdfViews = mysqlTable("tbl_pdf_views", {
+  id: int("id").primaryKey().autoincrement(),
+  book_id: int("book_id").notNull(),
+  category_id: int("category_id").notNull(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  user_agent: text("user_agent"),
+  view_date: timestamp("view_date").defaultNow().notNull(),
+  user_id: int("user_id")
+  // Optional: if user is logged in
+});
+var tblSiteVisitors = mysqlTable("tbl_site_visitors", {
+  id: int("id").primaryKey().autoincrement(),
+  ip_address: varchar("ip_address", { length: 45 }).notNull(),
+  first_visit: timestamp("first_visit").defaultNow().notNull(),
+  last_visit: timestamp("last_visit").defaultNow().notNull(),
+  visit_count: int("visit_count").default(1).notNull(),
+  user_agent: text("user_agent")
+});
 var insertUserActivitySchema = createInsertSchema(tblUserActivity).pick({
   user_id: true,
   activity_type: true,
+  ip_address: true,
+  user_agent: true
+});
+var insertPdfViewSchema = createInsertSchema(tblPdfViews).pick({
+  book_id: true,
+  category_id: true,
+  ip_address: true,
+  user_agent: true,
+  user_id: true
+});
+var insertSiteVisitorSchema = createInsertSchema(tblSiteVisitors).pick({
   ip_address: true,
   user_agent: true
 });
@@ -99,9 +135,9 @@ var insertLoginSchema = createInsertSchema(tblLogin).pick({
 var insertKategoriSchema = createInsertSchema(tblKategori).pick({
   nama_kategori: true
 });
-var insertRakSchema = createInsertSchema(tblRak).pick({
-  nama_rak: true,
-  lokasi: true,
+var insertLokasiSchema = createInsertSchema(tblLokasi).pick({
+  nama_lokasi: true,
+  deskripsi: true,
   kapasitas: true
 });
 var insertBukuSchema = createInsertSchema(tblBuku).omit({
@@ -113,7 +149,7 @@ var updateBukuSchema = insertBukuSchema.partial().extend({
     const num = Number(val);
     return isNaN(num) ? void 0 : num;
   }, z.number().optional()),
-  id_rak: z.preprocess((val) => {
+  id_lokasi: z.preprocess((val) => {
     if (val === null || val === void 0 || val === "") return void 0;
     const num = Number(val);
     return isNaN(num) ? void 0 : num;
@@ -144,15 +180,59 @@ var connection = mysql.createPool({
 var db = drizzle(connection, { schema: schema_exports, mode: "default" });
 
 // server/storage.ts
-import { eq, like, or, desc, asc, count, sql, and } from "drizzle-orm";
+import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
-var siteVisitorCount = 0;
-var pdfViewCount = 0;
-function incrementSiteVisitor() {
-  siteVisitorCount++;
+var siteVisitorIPs = /* @__PURE__ */ new Set();
+var pdfViewIPs = /* @__PURE__ */ new Set();
+var cache = /* @__PURE__ */ new Map();
+var CACHE_DURATION = 5 * 60 * 1e3;
+function getCachedData(key) {
+  const cached = cache.get(key);
+  if (cached && cached.expiry > Date.now()) {
+    return cached.data;
+  }
+  cache.delete(key);
+  return null;
 }
-function incrementPdfView() {
-  pdfViewCount++;
+function setCachedData(key, data) {
+  cache.set(key, { data, expiry: Date.now() + CACHE_DURATION });
+}
+function incrementSiteVisitor(ip) {
+  siteVisitorIPs.add(ip);
+}
+function incrementPdfView(ip) {
+  pdfViewIPs.add(ip);
+}
+async function recordPdfView(bookId, categoryId, ip, userAgent, userId) {
+  try {
+    await db.insert(tblPdfViews).values({
+      book_id: bookId,
+      category_id: categoryId,
+      ip_address: ip,
+      user_agent: userAgent,
+      user_id: userId
+    });
+  } catch (error) {
+    console.error("Error recording PDF view:", error);
+  }
+}
+async function recordSiteVisitor(ip, userAgent) {
+  try {
+    const existingVisitor = await db.select().from(tblSiteVisitors).where(eq(tblSiteVisitors.ip_address, ip)).limit(1);
+    if (existingVisitor.length > 0) {
+      await db.update(tblSiteVisitors).set({
+        last_visit: /* @__PURE__ */ new Date(),
+        visit_count: sql`visit_count + 1`
+      }).where(eq(tblSiteVisitors.ip_address, ip));
+    } else {
+      await db.insert(tblSiteVisitors).values({
+        ip_address: ip,
+        user_agent: userAgent
+      });
+    }
+  } catch (error) {
+    console.error("Error recording site visitor:", error);
+  }
 }
 var DatabaseStorage = class {
   async getUserByCredentials(username, password) {
@@ -243,7 +323,7 @@ var DatabaseStorage = class {
     const result = await db.delete(tblLogin).where(eq(tblLogin.id_login, id));
     return true;
   }
-  async getBooks(page, limit, search, categoryId, rakId, departmentFilter) {
+  async getBooks(page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter) {
     let whereConditions = [];
     if (search) {
       whereConditions.push(
@@ -258,18 +338,21 @@ var DatabaseStorage = class {
     if (categoryId) {
       whereConditions.push(eq(tblBuku.id_kategori, categoryId));
     }
-    if (rakId) {
-      whereConditions.push(eq(tblBuku.id_rak, rakId));
+    if (lokasiId) {
+      whereConditions.push(eq(tblBuku.id_lokasi, lokasiId));
     }
     if (departmentFilter) {
       whereConditions.push(eq(tblBuku.department, departmentFilter));
+    }
+    if (yearFilter) {
+      whereConditions.push(eq(tblBuku.thn_buku, yearFilter));
     }
     const offset = (page - 1) * limit;
     const booksQuery = db.select({
       id_buku: tblBuku.id_buku,
       buku_id: tblBuku.buku_id,
       id_kategori: tblBuku.id_kategori,
-      id_rak: tblBuku.id_rak,
+      id_lokasi: tblBuku.id_lokasi,
       sampul: tblBuku.sampul,
       isbn: tblBuku.isbn,
       lampiran: tblBuku.lampiran,
@@ -282,9 +365,10 @@ var DatabaseStorage = class {
       tgl_masuk: tblBuku.tgl_masuk,
       tersedia: tblBuku.tersedia,
       department: tblBuku.department,
+      file_type: tblBuku.file_type,
       kategori_nama: tblKategori.nama_kategori,
-      rak_nama: tblRak.nama_rak
-    }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblRak, eq(tblBuku.id_rak, tblRak.id_rak)).orderBy(desc(tblBuku.id_buku)).limit(limit).offset(offset);
+      lokasi_nama: tblLokasi.nama_lokasi
+    }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi)).orderBy(desc(tblBuku.id_buku)).limit(limit).offset(offset);
     const countQuery = db.select({ count: count() }).from(tblBuku);
     if (whereConditions.length > 0) {
       const condition = whereConditions.length === 1 ? whereConditions[0] : and(...whereConditions);
@@ -305,7 +389,7 @@ var DatabaseStorage = class {
       id_buku: tblBuku.id_buku,
       buku_id: tblBuku.buku_id,
       id_kategori: tblBuku.id_kategori,
-      id_rak: tblBuku.id_rak,
+      id_lokasi: tblBuku.id_lokasi,
       sampul: tblBuku.sampul,
       isbn: tblBuku.isbn,
       lampiran: tblBuku.lampiran,
@@ -318,9 +402,10 @@ var DatabaseStorage = class {
       tgl_masuk: tblBuku.tgl_masuk,
       tersedia: tblBuku.tersedia,
       department: tblBuku.department,
+      file_type: tblBuku.file_type,
       kategori_nama: tblKategori.nama_kategori,
-      rak_nama: tblRak.nama_rak
-    }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblRak, eq(tblBuku.id_rak, tblRak.id_rak)).where(eq(tblBuku.id_buku, id)).limit(1);
+      lokasi_nama: tblLokasi.nama_lokasi
+    }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi)).where(eq(tblBuku.id_buku, id)).limit(1);
     return results[0];
   }
   async createBook(book) {
@@ -338,6 +423,10 @@ var DatabaseStorage = class {
     const result = await db.delete(tblBuku).where(eq(tblBuku.id_buku, id));
     return result[0].affectedRows > 0;
   }
+  async getAvailableYears() {
+    const results = await db.selectDistinct({ thn_buku: tblBuku.thn_buku }).from(tblBuku).where(isNotNull(tblBuku.thn_buku)).orderBy(desc(tblBuku.thn_buku));
+    return results.map((r) => r.thn_buku).filter((year) => year !== null && year.trim() !== "");
+  }
   async getCategories() {
     return await db.select().from(tblKategori).orderBy(asc(tblKategori.nama_kategori));
   }
@@ -346,11 +435,17 @@ var DatabaseStorage = class {
     return results[0];
   }
   async getTopCategories(limit) {
+    const cacheKey = `top_categories_${limit}`;
+    const cached = getCachedData(cacheKey);
+    if (cached) {
+      return cached;
+    }
     const results = await db.select({
       id: tblKategori.id_kategori,
       name: tblKategori.nama_kategori,
       count: count(tblBuku.id_buku)
     }).from(tblKategori).leftJoin(tblBuku, eq(tblKategori.id_kategori, tblBuku.id_kategori)).groupBy(tblKategori.id_kategori, tblKategori.nama_kategori).orderBy(desc(count(tblBuku.id_buku))).limit(limit);
+    setCachedData(cacheKey, results);
     return results;
   }
   async updateCategory(id, data) {
@@ -361,38 +456,70 @@ var DatabaseStorage = class {
     const newCategory = await db.select().from(tblKategori).where(eq(tblKategori.id_kategori, result[0].insertId)).limit(1);
     return newCategory[0];
   }
+  async ensurePredefinedCategories() {
+    const predefinedCategories = [
+      "Book",
+      "Journal",
+      "Proceeding",
+      "Audio Visual",
+      "Catalogue",
+      "Flyer",
+      "Training",
+      "Poster",
+      "Thesis",
+      "Report",
+      "Newspaper"
+    ];
+    const existingCategories = await this.getCategories();
+    const existingNames = new Set(existingCategories.map((cat) => cat.nama_kategori.toLowerCase()));
+    for (const categoryName of predefinedCategories) {
+      if (!existingNames.has(categoryName.toLowerCase())) {
+        await this.createCategory({ nama_kategori: categoryName });
+        console.log(`Created predefined category: ${categoryName}`);
+      }
+    }
+  }
   async deleteCategory(id) {
     const result = await db.delete(tblKategori).where(eq(tblKategori.id_kategori, id));
     return result[0].affectedRows > 0;
   }
-  async getShelves() {
-    return await db.select().from(tblRak).orderBy(asc(tblRak.nama_rak));
+  async getLocations() {
+    return await db.select().from(tblLokasi).orderBy(asc(tblLokasi.nama_lokasi));
   }
-  async getShelfById(id) {
-    const results = await db.select().from(tblRak).where(eq(tblRak.id_rak, id)).limit(1);
+  async getLocationById(id) {
+    const results = await db.select().from(tblLokasi).where(eq(tblLokasi.id_lokasi, id)).limit(1);
     return results[0];
   }
-  async createShelf(data) {
-    const result = await db.insert(tblRak).values({
-      nama_rak: data.nama_rak,
-      lokasi: data.lokasi,
+  async createLocation(data) {
+    const result = await db.insert(tblLokasi).values({
+      nama_lokasi: data.nama_lokasi,
+      deskripsi: data.deskripsi,
       kapasitas: data.kapasitas
     });
-    const newShelf = await db.select().from(tblRak).where(eq(tblRak.id_rak, result[0].insertId)).limit(1);
-    return newShelf[0];
+    const newLocation = await db.select().from(tblLokasi).where(eq(tblLokasi.id_lokasi, result[0].insertId)).limit(1);
+    return newLocation[0];
   }
-  async updateShelf(id, data) {
-    await db.update(tblRak).set({
-      nama_rak: data.nama_rak,
-      lokasi: data.lokasi,
+  async updateLocation(id, data) {
+    await db.update(tblLokasi).set({
+      nama_lokasi: data.nama_lokasi,
+      deskripsi: data.deskripsi,
       kapasitas: data.kapasitas
-    }).where(eq(tblRak.id_rak, id));
+    }).where(eq(tblLokasi.id_lokasi, id));
   }
-  async deleteShelf(id) {
-    const result = await db.delete(tblRak).where(eq(tblRak.id_rak, id));
+  async deleteLocation(id) {
+    const result = await db.delete(tblLokasi).where(eq(tblLokasi.id_lokasi, id));
     return result[0].affectedRows > 0;
   }
   async getDashboardStats() {
+    const cacheKey = "dashboard_stats";
+    const cached = getCachedData(cacheKey);
+    if (cached) {
+      return {
+        ...cached,
+        siteVisitorCount: siteVisitorIPs.size,
+        pdfViewCount: pdfViewIPs.size
+      };
+    }
     const [booksCount, availableCount, categoriesCount] = await Promise.all([
       db.select({ count: count() }).from(tblBuku),
       db.select({ count: count() }).from(tblBuku).where(eq(tblBuku.tersedia, 1)),
@@ -402,18 +529,45 @@ var DatabaseStorage = class {
     const availableBooks = availableCount[0].count;
     const onLoan = totalBooks - availableBooks;
     const categories = categoriesCount[0].count;
-    return {
+    const stats = {
       totalBooks,
       availableBooks,
       onLoan,
       categories,
-      siteVisitorCount,
-      pdfViewCount
+      siteVisitorCount: siteVisitorIPs.size,
+      pdfViewCount: pdfViewIPs.size
     };
+    setCachedData(cacheKey, stats);
+    return stats;
   }
   async getDepartments() {
     const results = await db.selectDistinct({ department: tblBuku.department }).from(tblBuku).where(sql`${tblBuku.department} IS NOT NULL AND ${tblBuku.department} != ''`).orderBy(asc(tblBuku.department));
     return results.filter((r) => r.department);
+  }
+  async getDocumentsByDepartment() {
+    const results = await db.select({
+      department: tblBuku.department,
+      count: count(tblBuku.id_buku)
+    }).from(tblBuku).where(sql`${tblBuku.department} IS NOT NULL AND ${tblBuku.department} != ''`).groupBy(tblBuku.department).orderBy(desc(count(tblBuku.id_buku)));
+    return results.filter((r) => r.department);
+  }
+  async getMostReadByCategory() {
+    try {
+      const pdfViewResults = await db.select({
+        category: tblKategori.nama_kategori,
+        views: count(tblPdfViews.id)
+      }).from(tblPdfViews).innerJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori)).groupBy(tblKategori.id_kategori, tblKategori.nama_kategori).orderBy(desc(count(tblPdfViews.id))).limit(5);
+      if (pdfViewResults.length > 0) {
+        return pdfViewResults.filter((r) => r.category);
+      }
+    } catch (error) {
+      console.log("PDF views table not available, falling back to book count");
+    }
+    const results = await db.select({
+      category: tblKategori.nama_kategori,
+      views: count(tblBuku.id_buku)
+    }).from(tblKategori).leftJoin(tblBuku, eq(tblKategori.id_kategori, tblBuku.id_kategori)).groupBy(tblKategori.id_kategori, tblKategori.nama_kategori).orderBy(desc(count(tblBuku.id_buku))).limit(5);
+    return results.filter((r) => r.category);
   }
   async logUserActivity(userId, activityType, ipAddress, userAgent) {
     await db.insert(tblUserActivity).values({
@@ -469,20 +623,20 @@ var DatabaseStorage = class {
     fourWeeksAgo.setDate(fourWeeksAgo.getDate() - 28);
     try {
       const results = await db.select({
-        categoryName: sql`COALESCE(tk.nama_kategori, 'Uncategorized')`,
+        categoryName: sql`COALESCE(${tblKategori.nama_kategori}, 'Uncategorized')`,
         booksAdded: sql`COUNT(*)`,
-        latestDate: sql`MAX(STR_TO_DATE(tb.tgl_masuk, '%Y-%m-%d'))`
+        latestDate: sql`MAX(STR_TO_DATE(${tblBuku.tgl_masuk}, '%Y-%m-%d'))`
       }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).where(sql`
-          tb.tgl_masuk IS NOT NULL 
-          AND tb.tgl_masuk != ''
-          AND tb.tgl_masuk != '0000-00-00'
-          AND STR_TO_DATE(tb.tgl_masuk, '%Y-%m-%d') >= ${fourWeeksAgo}
-        `).groupBy(sql`tk.id_kategori, tk.nama_kategori`).orderBy(sql`COUNT(*) DESC`).limit(8);
+          ${tblBuku.tgl_masuk} IS NOT NULL 
+          AND ${tblBuku.tgl_masuk} != ''
+          AND ${tblBuku.tgl_masuk} != '0000-00-00'
+          AND STR_TO_DATE(${tblBuku.tgl_masuk}, '%Y-%m-%d') >= ${fourWeeksAgo}
+        `).groupBy(sql`${tblKategori.id_kategori}, ${tblKategori.nama_kategori}`).orderBy(sql`COUNT(*) DESC`).limit(8);
       if (results.length === 0) {
         const fallbackResults = await db.select({
-          categoryName: sql`COALESCE(tk.nama_kategori, 'Uncategorized')`,
+          categoryName: sql`COALESCE(${tblKategori.nama_kategori}, 'Uncategorized')`,
           booksAdded: sql`COUNT(*)`
-        }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).where(sql`tb.tgl_masuk IS NOT NULL AND tb.tgl_masuk != '' AND tb.tgl_masuk != '0000-00-00'`).groupBy(sql`tk.id_kategori, tk.nama_kategori`).orderBy(sql`COUNT(*) DESC`).limit(8);
+        }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).where(sql`${tblBuku.tgl_masuk} IS NOT NULL AND ${tblBuku.tgl_masuk} != '' AND ${tblBuku.tgl_masuk} != '0000-00-00'`).groupBy(sql`${tblKategori.id_kategori}, ${tblKategori.nama_kategori}`).orderBy(sql`COUNT(*) DESC`).limit(8);
         return fallbackResults.map((result) => ({
           week: result.categoryName.length > 15 ? result.categoryName.substring(0, 15) + "..." : result.categoryName,
           booksAdded: result.booksAdded
@@ -497,6 +651,38 @@ var DatabaseStorage = class {
       return [];
     }
   }
+  async getDatabaseVisitorStats() {
+    try {
+      const [siteVisitors, pdfViews, uniquePdfViewers] = await Promise.all([
+        // Count unique site visitors
+        db.select({ count: count() }).from(tblSiteVisitors),
+        // Count total PDF views
+        db.select({ count: count() }).from(tblPdfViews),
+        // Count unique PDF viewers (distinct IPs that viewed PDFs)
+        db.select({ count: count(sql`DISTINCT ${tblPdfViews.ip_address}`) }).from(tblPdfViews)
+      ]);
+      return {
+        siteVisitorCount: siteVisitors[0]?.count || 0,
+        pdfViewCount: pdfViews[0]?.count || 0,
+        uniquePdfViewers: uniquePdfViewers[0]?.count || 0
+      };
+    } catch (error) {
+      console.error("Error fetching database visitor stats:", error);
+      return { siteVisitorCount: 0, pdfViewCount: 0, uniquePdfViewers: 0 };
+    }
+  }
+  async getTopCategoriesByViews() {
+    try {
+      const results = await db.select({
+        category: tblKategori.nama_kategori,
+        views: count(tblPdfViews.id)
+      }).from(tblPdfViews).innerJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori)).groupBy(tblKategori.id_kategori, tblKategori.nama_kategori).orderBy(desc(count(tblPdfViews.id))).limit(10);
+      return results.filter((r) => r.category);
+    } catch (error) {
+      console.error("Error fetching top categories by views:", error);
+      return [];
+    }
+  }
 };
 var storage = new DatabaseStorage();
 
@@ -507,6 +693,9 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
+function getClientIP(req) {
+  return req.ip || req.connection.remoteAddress || req.socket.remoteAddress || req.connection?.socket?.remoteAddress || req.headers["x-forwarded-for"]?.toString().split(",")[0] || req.headers["x-real-ip"]?.toString() || "127.0.0.1";
+}
 var storageConfig = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, path.join(process.cwd(), "pdfs"));
@@ -544,14 +733,31 @@ async function registerRoutes(app2) {
     res.setHeader("Access-Control-Allow-Origin", "*");
     next();
   }, express.static(path.join(process.cwd(), "client/public/fonts")));
-  app2.use("/api/pdfs", (req, res, next) => {
-    incrementPdfView();
+  const trackPdfView = async (req, res, next) => {
+    try {
+      const filename = req.params.filename || path.basename(req.path);
+      const bookIdMatch = filename.match(/(?:book_)?(\d+)\.pdf$/i);
+      if (bookIdMatch) {
+        const bookId = parseInt(bookIdMatch[1]);
+        const book = await storage.getBookById(bookId);
+        if (book && book.id_kategori) {
+          await recordPdfView(
+            bookId,
+            book.id_kategori,
+            getClientIP(req),
+            req.headers["user-agent"],
+            req.session.userId
+          );
+        }
+      }
+      incrementPdfView(getClientIP(req));
+    } catch (error) {
+      console.error("Error tracking PDF view:", error);
+    }
     next();
-  }, express.static(path.join(process.cwd(), "pdfs")));
-  app2.use("/pdfs", (req, res, next) => {
-    incrementPdfView();
-    next();
-  }, express.static(path.join(process.cwd(), "pdfs")));
+  };
+  app2.use("/api/pdfs", trackPdfView, express.static(path.join(process.cwd(), "pdfs")));
+  app2.use("/pdfs", trackPdfView, express.static(path.join(process.cwd(), "pdfs")));
   app2.get(["/pdfs/:filename", "/api/pdfs/:filename"], (req, res) => {
     const filePath = path.join(process.cwd(), "pdfs", req.params.filename);
     if (!fs.existsSync(filePath)) {
@@ -562,7 +768,13 @@ async function registerRoutes(app2) {
     fs.createReadStream(filePath).pipe(res);
   });
   app2.get("/api/dashboard/stats", requireAuth, async (req, res, next) => {
-    incrementSiteVisitor();
+    const ip = getClientIP(req);
+    incrementSiteVisitor(ip);
+    try {
+      await recordSiteVisitor(ip, req.headers["user-agent"]);
+    } catch (error) {
+      console.log("Site visitor recording disabled (tables not ready)");
+    }
     next();
   });
   app2.post("/api/auth/login", async (req, res) => {
@@ -648,17 +860,55 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Failed to fetch weekly books data" });
     }
   });
+  app2.get("/api/dashboard/documents-by-department", requireAuth, async (req, res) => {
+    try {
+      const departmentData = await storage.getDocumentsByDepartment();
+      res.json(departmentData);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch documents by department" });
+    }
+  });
+  app2.get("/api/dashboard/most-read-by-category", requireAuth, async (req, res) => {
+    try {
+      const mostReadData = await storage.getMostReadByCategory();
+      res.json(mostReadData);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch most read by category" });
+    }
+  });
+  app2.get("/api/dashboard/database-stats", requireAuth, async (req, res) => {
+    try {
+      const dbStats = await storage.getDatabaseVisitorStats();
+      res.json(dbStats);
+    } catch (error) {
+      console.error("Error fetching database stats:", error);
+      res.status(500).json({ message: "Failed to fetch database stats" });
+    }
+  });
+  app2.get("/api/dashboard/top-categories-by-views", requireAuth, async (req, res) => {
+    try {
+      const topCategories = await storage.getTopCategoriesByViews();
+      res.json(topCategories);
+    } catch (error) {
+      console.error("Error fetching top categories by views:", error);
+      res.status(500).json({ message: "Failed to fetch top categories by views" });
+    }
+  });
   app2.get("/api/books", requireAuth, async (req, res) => {
     try {
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 25;
       const search = req.query.search;
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId) : void 0;
-      const rakId = req.query.rakId ? parseInt(req.query.rakId) : void 0;
+      const lokasiId = req.query.lokasiId ? parseInt(req.query.lokasiId) : void 0;
       const departmentFilter = req.query.departmentFilter;
-      const result = await storage.getBooks(page, limit, search, categoryId, rakId, departmentFilter);
+      const yearFilter = req.query.yearFilter;
+      console.log("Fetching books with params:", { page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter });
+      const result = await storage.getBooks(page, limit, search, categoryId, lokasiId, departmentFilter, yearFilter);
+      console.log("Successfully fetched books:", result.books.length, "total:", result.total);
       res.json(result);
     } catch (error) {
+      console.error("Error fetching books:", error);
       res.status(500).json({ message: "Failed to fetch books" });
     }
   });
@@ -690,10 +940,10 @@ async function registerRoutes(app2) {
         } else {
           bookData.id_kategori = null;
         }
-        if (bookData.id_rak && bookData.id_rak !== "" && bookData.id_rak !== "0") {
-          bookData.id_rak = parseInt(bookData.id_rak);
+        if (bookData.id_lokasi && bookData.id_lokasi !== "" && bookData.id_lokasi !== "0") {
+          bookData.id_lokasi = parseInt(bookData.id_lokasi);
         } else {
-          bookData.id_rak = null;
+          bookData.id_lokasi = null;
         }
         if (bookData.tersedia) bookData.tersedia = parseInt(bookData.tersedia);
         Object.keys(bookData).forEach((key) => {
@@ -824,70 +1074,85 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Failed to delete category" });
     }
   });
-  app2.get("/api/shelves", requireAuth, async (req, res) => {
-    try {
-      const shelves = await storage.getShelves();
-      res.json(shelves);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch shelves" });
-    }
-  });
-  app2.post("/api/shelves", requireAuth, async (req, res) => {
+  app2.post("/api/categories/init-predefined", requireAuth, async (req, res) => {
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can add shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can initialize predefined categories" });
     }
     try {
-      const { nama_rak, lokasi, kapasitas } = req.body;
-      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
-        return res.status(400).json({ message: "Invalid shelf name" });
+      await storage.ensurePredefinedCategories();
+      res.json({ message: "Predefined categories initialized successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to initialize predefined categories" });
+    }
+  });
+  app2.get("/api/locations", requireAuth, async (req, res) => {
+    try {
+      console.log("Fetching locations from database...");
+      const locations = await storage.getLocations();
+      console.log("Successfully fetched locations:", locations.length);
+      res.json(locations);
+    } catch (error) {
+      console.error("Error fetching locations:", error);
+      res.status(500).json({ message: "Failed to fetch locations" });
+    }
+  });
+  app2.post("/api/locations", requireAuth, async (req, res) => {
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can add locations" });
+    }
+    try {
+      const { nama_lokasi, deskripsi, kapasitas } = req.body;
+      if (!nama_lokasi || typeof nama_lokasi !== "string" || !nama_lokasi.trim()) {
+        return res.status(400).json({ message: "Invalid location name" });
       }
-      const newShelf = await storage.createShelf({
-        nama_rak: nama_rak.trim(),
-        lokasi: lokasi || null,
+      const newLocation = await storage.createLocation({
+        nama_lokasi: nama_lokasi.trim(),
+        deskripsi: deskripsi || null,
         kapasitas: kapasitas ? parseInt(kapasitas) : null
       });
-      res.status(201).json(newShelf);
+      res.status(201).json(newLocation);
     } catch (error) {
-      res.status(400).json({ message: "Failed to create shelf" });
+      res.status(400).json({ message: "Failed to create location" });
     }
   });
-  app2.patch("/api/shelves/:id", requireAuth, async (req, res) => {
+  app2.patch("/api/locations/:id", requireAuth, async (req, res) => {
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can edit shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can edit locations" });
     }
     try {
       const id = parseInt(req.params.id);
-      const { nama_rak, lokasi, kapasitas } = req.body;
-      if (!nama_rak || typeof nama_rak !== "string" || !nama_rak.trim()) {
-        return res.status(400).json({ message: "Invalid shelf name" });
+      const { nama_lokasi, deskripsi, kapasitas } = req.body;
+      if (!nama_lokasi || typeof nama_lokasi !== "string" || !nama_lokasi.trim()) {
+        return res.status(400).json({ message: "Invalid location name" });
       }
-      await storage.updateShelf(id, {
-        nama_rak: nama_rak.trim(),
-        lokasi: lokasi || null,
+      await storage.updateLocation(id, {
+        nama_lokasi: nama_lokasi.trim(),
+        deskripsi: deskripsi || null,
         kapasitas: kapasitas ? parseInt(kapasitas) : null
       });
-      const updated = await storage.getShelfById(id);
+      const updated = await storage.getLocationById(id);
       res.json(updated);
     } catch (error) {
-      res.status(400).json({ message: "Failed to update shelf" });
+      res.status(400).json({ message: "Failed to update location" });
     }
   });
-  app2.delete("/api/shelves/:id", requireAuth, async (req, res) => {
+  app2.delete("/api/locations/:id", requireAuth, async (req, res) => {
     const user = req.session.user;
     if (!user || user.level !== "admin") {
-      return res.status(403).json({ message: "Forbidden: Only admin can delete shelves" });
+      return res.status(403).json({ message: "Forbidden: Only admin can delete locations" });
     }
     try {
       const id = parseInt(req.params.id);
-      const success = await storage.deleteShelf(id);
+      const success = await storage.deleteLocation(id);
       if (!success) {
-        return res.status(404).json({ message: "Shelf not found" });
+        return res.status(404).json({ message: "Location not found" });
       }
-      res.json({ message: "Shelf deleted successfully" });
+      res.json({ message: "Location deleted successfully" });
     } catch (error) {
-      res.status(500).json({ message: "Failed to delete shelf" });
+      res.status(500).json({ message: "Failed to delete location" });
     }
   });
   app2.get("/api/departments", requireAuth, async (req, res) => {
@@ -896,6 +1161,14 @@ async function registerRoutes(app2) {
       res.json(departments);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch departments" });
+    }
+  });
+  app2.get("/api/years", requireAuth, async (req, res) => {
+    try {
+      const years = await storage.getAvailableYears();
+      res.json(years);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch available years" });
     }
   });
   app2.get("/api/users", requireAuth, async (req, res) => {
@@ -1115,6 +1388,12 @@ app.use((req, res, next) => {
   next();
 });
 (async () => {
+  try {
+    await storage.ensurePredefinedCategories();
+    log("Predefined categories initialized successfully");
+  } catch (error) {
+    log(`Warning: Failed to initialize predefined categories: ${error}`);
+  }
   const server = await registerRoutes(app);
   app.use((err, _req, res, _next) => {
     const status = err.status || err.statusCode || 500;
