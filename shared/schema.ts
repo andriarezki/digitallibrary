@@ -1,4 +1,4 @@
-import { mysqlTable, int, varchar, text, timestamp } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, varchar, text, timestamp, mysqlEnum, date } from "drizzle-orm/mysql-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -158,6 +158,92 @@ export type InsertPdfView = z.infer<typeof insertPdfViewSchema>;
 export type PdfView = typeof tblPdfViews.$inferSelect;
 export type InsertSiteVisitor = z.infer<typeof insertSiteVisitorSchema>;
 export type SiteVisitor = typeof tblSiteVisitors.$inferSelect;
+
+// ===== LOANS SYSTEM TABLES =====
+
+// Employee master data table
+export const tblEmployees = mysqlTable("tbl_employees", {
+  id: int("id").primaryKey().autoincrement(),
+  nik: varchar("nik", { length: 20 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  department: varchar("department", { length: 100 }),
+  position: varchar("position", { length: 100 }),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+// Loan requests table
+export const tblLoanRequests = mysqlTable("tbl_loan_requests", {
+  id: int("id").primaryKey().autoincrement(),
+  request_id: varchar("request_id", { length: 20 }).notNull().unique(),
+  
+  // Book information
+  id_buku: int("id_buku").notNull(),
+  
+  // Borrower information
+  employee_nik: varchar("employee_nik", { length: 20 }).notNull(),
+  borrower_name: varchar("borrower_name", { length: 255 }).notNull(),
+  borrower_email: varchar("borrower_email", { length: 255 }),
+  borrower_phone: varchar("borrower_phone", { length: 20 }),
+  
+  // Request details
+  request_date: timestamp("request_date").defaultNow().notNull(),
+  requested_return_date: date("requested_return_date"),
+  reason: text("reason"),
+  
+  // Approval workflow
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"]).default("pending"),
+  
+  // Admin approval details
+  approved_by: int("approved_by"),
+  approval_date: timestamp("approval_date"),
+  approval_notes: text("approval_notes"),
+  
+  // Loan details
+  loan_date: timestamp("loan_date"),
+  due_date: date("due_date"),
+  return_date: timestamp("return_date"),
+  return_notes: text("return_notes"),
+  
+  // Metadata
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
+// Loan history table
+export const tblLoanHistory = mysqlTable("tbl_loan_history", {
+  id: int("id").primaryKey().autoincrement(),
+  loan_request_id: int("loan_request_id").notNull(),
+  action: mysqlEnum("action", ["submitted", "approved", "rejected", "loaned", "returned", "overdue_notice"]).notNull(),
+  action_date: timestamp("action_date").defaultNow().notNull(),
+  performed_by: int("performed_by"),
+  notes: text("notes"),
+  old_status: mysqlEnum("old_status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"]),
+  new_status: mysqlEnum("new_status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"]),
+});
+
+// ===== LOANS SYSTEM TYPES =====
+
+export type Employee = typeof tblEmployees.$inferSelect;
+export type InsertEmployee = typeof tblEmployees.$inferInsert;
+
+export type LoanRequest = typeof tblLoanRequests.$inferSelect;
+export type InsertLoanRequest = typeof tblLoanRequests.$inferInsert;
+
+export type LoanHistory = typeof tblLoanHistory.$inferSelect;
+export type InsertLoanHistory = typeof tblLoanHistory.$inferInsert;
+
+// Enhanced loan request with related data
+export type LoanRequestWithDetails = LoanRequest & {
+  book_title?: string | null;
+  book_isbn?: string | null;
+  employee_name?: string | null;
+  employee_department?: string | null;
+  approver_name?: string | null;
+};
 
 export type BukuWithDetails = Buku & {
   kategori_nama?: string | null;

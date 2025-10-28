@@ -518,6 +518,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Clean up categories - keep only predefined ones (admin only)
+  app.post("/api/categories/cleanup", requireAuth, async (req, res) => {
+    // Only allow admin
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can cleanup categories" });
+    }
+    try {
+      await storage.cleanupCategories();
+      res.json({ message: "Categories cleaned up successfully - only predefined categories remain" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to cleanup categories" });
+    }
+  });
+
   // Locations routes
   app.get("/api/locations", requireAuth, async (req, res) => {
     try {
@@ -668,6 +683,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ message: "User deleted successfully" });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+
+  // ===== LOANS SYSTEM ROUTES =====
+  
+  // Employee routes
+  app.get("/api/employees", async (req, res) => {
+    try {
+      const employees = await storage.getEmployees();
+      res.json(employees);
+    } catch (error) {
+      console.error("Error fetching employees:", error);
+      res.status(500).json({ message: "Failed to fetch employees" });
+    }
+  });
+
+  app.get("/api/employees/:nik", async (req, res) => {
+    try {
+      const { nik } = req.params;
+      const employee = await storage.getEmployeeByNik(nik);
+      
+      if (!employee) {
+        return res.status(404).json({ message: "Employee not found" });
+      }
+      
+      res.json(employee);
+    } catch (error) {
+      console.error("Error fetching employee:", error);
+      res.status(500).json({ message: "Failed to fetch employee" });
+    }
+  });
+
+  // Loan request routes
+  app.post("/api/loan-requests", async (req, res) => {
+    try {
+      const loanRequest = await storage.createLoanRequest(req.body);
+      res.status(201).json(loanRequest);
+    } catch (error) {
+      console.error("Error creating loan request:", error);
+      res.status(500).json({ message: "Failed to create loan request" });
+    }
+  });
+
+  app.get("/api/loan-requests", async (req, res) => {
+    try {
+      const { status, employeeNik, page = "1", limit = "25" } = req.query;
+      
+      const filters = {
+        status: status as string,
+        employeeNik: employeeNik as string,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+      };
+      
+      const result = await storage.getLoanRequests(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching loan requests:", error);
+      res.status(500).json({ message: "Failed to fetch loan requests" });
+    }
+  });
+
+  app.get("/api/loan-requests/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const loanRequest = await storage.getLoanRequestById(parseInt(id));
+      
+      if (!loanRequest) {
+        return res.status(404).json({ message: "Loan request not found" });
+      }
+      
+      res.json(loanRequest);
+    } catch (error) {
+      console.error("Error fetching loan request:", error);
+      res.status(500).json({ message: "Failed to fetch loan request" });
+    }
+  });
+
+  // Admin approval routes (require authentication)
+  app.post("/api/loan-requests/:id/approve", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.user!.id_login;
+      
+      const success = await storage.approveLoanRequest(parseInt(id), adminId, notes);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      
+      res.json({ message: "Loan request approved successfully" });
+    } catch (error) {
+      console.error("Error approving loan request:", error);
+      res.status(500).json({ message: "Failed to approve loan request" });
+    }
+  });
+
+  app.post("/api/loan-requests/:id/reject", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.user!.id_login;
+      
+      const success = await storage.rejectLoanRequest(parseInt(id), adminId, notes);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      
+      res.json({ message: "Loan request rejected successfully" });
+    } catch (error) {
+      console.error("Error rejecting loan request:", error);
+      res.status(500).json({ message: "Failed to reject loan request" });
     }
   });
 

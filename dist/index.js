@@ -26,7 +26,10 @@ __export(schema_exports, {
   insertSiteVisitorSchema: () => insertSiteVisitorSchema,
   insertUserActivitySchema: () => insertUserActivitySchema,
   tblBuku: () => tblBuku,
+  tblEmployees: () => tblEmployees,
   tblKategori: () => tblKategori,
+  tblLoanHistory: () => tblLoanHistory,
+  tblLoanRequests: () => tblLoanRequests,
   tblLogin: () => tblLogin,
   tblLokasi: () => tblLokasi,
   tblPdfViews: () => tblPdfViews,
@@ -34,7 +37,7 @@ __export(schema_exports, {
   tblUserActivity: () => tblUserActivity,
   updateBukuSchema: () => updateBukuSchema
 });
-import { mysqlTable, int, varchar, text, timestamp } from "drizzle-orm/mysql-core";
+import { mysqlTable, int, varchar, text, timestamp, mysqlEnum, date } from "drizzle-orm/mysql-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 var tblLogin = mysqlTable("tbl_login", {
@@ -164,6 +167,57 @@ var updateBukuSchema = insertBukuSchema.partial().extend({
     const num = Number(val);
     return isNaN(num) ? void 0 : num;
   }, z.number().optional())
+});
+var tblEmployees = mysqlTable("tbl_employees", {
+  id: int("id").primaryKey().autoincrement(),
+  nik: varchar("nik", { length: 20 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 255 }),
+  phone: varchar("phone", { length: 20 }),
+  department: varchar("department", { length: 100 }),
+  position: varchar("position", { length: 100 }),
+  status: mysqlEnum("status", ["active", "inactive"]).default("active"),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull()
+});
+var tblLoanRequests = mysqlTable("tbl_loan_requests", {
+  id: int("id").primaryKey().autoincrement(),
+  request_id: varchar("request_id", { length: 20 }).notNull().unique(),
+  // Book information
+  id_buku: int("id_buku").notNull(),
+  // Borrower information
+  employee_nik: varchar("employee_nik", { length: 20 }).notNull(),
+  borrower_name: varchar("borrower_name", { length: 255 }).notNull(),
+  borrower_email: varchar("borrower_email", { length: 255 }),
+  borrower_phone: varchar("borrower_phone", { length: 20 }),
+  // Request details
+  request_date: timestamp("request_date").defaultNow().notNull(),
+  requested_return_date: date("requested_return_date"),
+  reason: text("reason"),
+  // Approval workflow
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"]).default("pending"),
+  // Admin approval details
+  approved_by: int("approved_by"),
+  approval_date: timestamp("approval_date"),
+  approval_notes: text("approval_notes"),
+  // Loan details
+  loan_date: timestamp("loan_date"),
+  due_date: date("due_date"),
+  return_date: timestamp("return_date"),
+  return_notes: text("return_notes"),
+  // Metadata
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull()
+});
+var tblLoanHistory = mysqlTable("tbl_loan_history", {
+  id: int("id").primaryKey().autoincrement(),
+  loan_request_id: int("loan_request_id").notNull(),
+  action: mysqlEnum("action", ["submitted", "approved", "rejected", "loaned", "returned", "overdue_notice"]).notNull(),
+  action_date: timestamp("action_date").defaultNow().notNull(),
+  performed_by: int("performed_by"),
+  notes: text("notes"),
+  old_status: mysqlEnum("old_status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"]),
+  new_status: mysqlEnum("new_status", ["pending", "approved", "rejected", "on_loan", "returned", "overdue"])
 });
 
 // server/db.ts
@@ -366,6 +420,7 @@ var DatabaseStorage = class {
       tersedia: tblBuku.tersedia,
       department: tblBuku.department,
       file_type: tblBuku.file_type,
+      // Restored - column exists on server
       kategori_nama: tblKategori.nama_kategori,
       lokasi_nama: tblLokasi.nama_lokasi
     }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi)).orderBy(desc(tblBuku.id_buku)).limit(limit).offset(offset);
@@ -479,6 +534,37 @@ var DatabaseStorage = class {
       }
     }
   }
+  async cleanupCategories() {
+    const predefinedCategories = [
+      "Book",
+      "Journal",
+      "Proceeding",
+      "Audio Visual",
+      "Catalogue",
+      "Flyer",
+      "Training",
+      "Poster",
+      "Thesis",
+      "Report",
+      "Newspaper"
+    ];
+    try {
+      const uncategorizedCategory = await this.createCategory({ nama_kategori: "Uncategorized" });
+      const categoriesToDelete = await db.select().from(tblKategori).where(sql`nama_kategori NOT IN (${predefinedCategories.map((cat) => `'${cat}'`).join(",")})`);
+      for (const category of categoriesToDelete) {
+        if (category.nama_kategori !== "Uncategorized") {
+          await db.update(tblBuku).set({ id_kategori: uncategorizedCategory.id_kategori }).where(eq(tblBuku.id_kategori, category.id_kategori));
+          console.log(`Moved books from category "${category.nama_kategori}" to "Uncategorized"`);
+        }
+      }
+      await db.delete(tblKategori).where(sql`nama_kategori NOT IN (${[...predefinedCategories, "Uncategorized"].map((cat) => `'${cat}'`).join(",")})`);
+      await this.ensurePredefinedCategories();
+      console.log("Categories cleanup completed - only predefined categories remain");
+    } catch (error) {
+      console.error("Error during category cleanup:", error);
+      throw error;
+    }
+  }
   async deleteCategory(id) {
     const result = await db.delete(tblKategori).where(eq(tblKategori.id_kategori, id));
     return result[0].affectedRows > 0;
@@ -583,38 +669,50 @@ var DatabaseStorage = class {
         SELECT COUNT(*) as count 
         FROM information_schema.tables 
         WHERE table_schema = DATABASE() 
-        AND table_name = 'tbl_user_activity'
+        AND table_name = 'tbl_site_visitors'
       `);
       if (!tableCheck[0] || tableCheck[0].count === 0) {
-        console.log("User activity table not found, returning sample data");
+        console.log("Site visitors table not found, returning sample data");
         return [
-          { month: "May", activeUsers: 5 },
-          { month: "Jun", activeUsers: 8 },
-          { month: "Jul", activeUsers: 12 },
-          { month: "Aug", activeUsers: 15 },
-          { month: "Sep", activeUsers: 18 },
-          { month: "Oct", activeUsers: 22 }
+          { month: "May", activeUsers: 15 },
+          { month: "Jun", activeUsers: 28 },
+          { month: "Jul", activeUsers: 42 },
+          { month: "Aug", activeUsers: 35 },
+          { month: "Sep", activeUsers: 58 },
+          { month: "Oct", activeUsers: 67 }
         ];
       }
       const sixMonthsAgo = /* @__PURE__ */ new Date();
       sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
       const results = await db.select({
-        month: sql`DATE_FORMAT(activity_date, '%Y-%m')`,
-        activeUsers: sql`COUNT(DISTINCT user_id)`
-      }).from(tblUserActivity).where(sql`activity_date >= ${sixMonthsAgo}`).groupBy(sql`DATE_FORMAT(activity_date, '%Y-%m')`).orderBy(sql`DATE_FORMAT(activity_date, '%Y-%m')`);
-      return results.map((result) => ({
-        month: (/* @__PURE__ */ new Date(result.month + "-01")).toLocaleString("default", { month: "short" }),
-        activeUsers: result.activeUsers
-      }));
+        month: sql`DATE_FORMAT(first_visit, '%Y-%m')`,
+        activeUsers: sql`COUNT(DISTINCT ip_address)`
+        // Count unique IP addresses instead of user_id
+      }).from(tblSiteVisitors).where(sql`first_visit >= ${sixMonthsAgo.toISOString().split("T")[0]}`).groupBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`).orderBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`);
+      const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      const currentDate = /* @__PURE__ */ new Date();
+      const monthlyData = [];
+      for (let i = 5; i >= 0; i--) {
+        const date2 = new Date(currentDate);
+        date2.setMonth(date2.getMonth() - i);
+        const yearMonth = `${date2.getFullYear()}-${String(date2.getMonth() + 1).padStart(2, "0")}`;
+        const monthName = monthNames[date2.getMonth()];
+        const result = results.find((r) => r.month === yearMonth);
+        monthlyData.push({
+          month: monthName,
+          activeUsers: result ? result.activeUsers : 0
+        });
+      }
+      return monthlyData;
     } catch (error) {
-      console.error("Error fetching monthly user activity:", error);
+      console.error("Error fetching monthly visitor activity:", error);
       return [
-        { month: "May", activeUsers: 5 },
-        { month: "Jun", activeUsers: 8 },
-        { month: "Jul", activeUsers: 12 },
-        { month: "Aug", activeUsers: 15 },
-        { month: "Sep", activeUsers: 18 },
-        { month: "Oct", activeUsers: 22 }
+        { month: "May", activeUsers: 15 },
+        { month: "Jun", activeUsers: 28 },
+        { month: "Jul", activeUsers: 42 },
+        { month: "Aug", activeUsers: 35 },
+        { month: "Sep", activeUsers: 58 },
+        { month: "Oct", activeUsers: 67 }
       ];
     }
   }
@@ -681,6 +779,270 @@ var DatabaseStorage = class {
     } catch (error) {
       console.error("Error fetching top categories by views:", error);
       return [];
+    }
+  }
+  // ===== LOANS SYSTEM IMPLEMENTATIONS =====
+  // Employee methods
+  async getEmployees() {
+    return await db.select().from(tblEmployees).where(eq(tblEmployees.status, "active")).orderBy(tblEmployees.name);
+  }
+  async getEmployeeByNik(nik) {
+    const results = await db.select().from(tblEmployees).where(eq(tblEmployees.nik, nik)).limit(1);
+    return results[0];
+  }
+  async createEmployee(employee) {
+    const results = await db.insert(tblEmployees).values(employee);
+    const insertedId = results[0].insertId;
+    const newEmployee = await db.select().from(tblEmployees).where(eq(tblEmployees.id, insertedId)).limit(1);
+    return newEmployee[0];
+  }
+  async updateEmployee(id, employee) {
+    await db.update(tblEmployees).set(employee).where(eq(tblEmployees.id, id));
+    const updated = await db.select().from(tblEmployees).where(eq(tblEmployees.id, id)).limit(1);
+    return updated[0];
+  }
+  async deleteEmployee(id) {
+    try {
+      await db.update(tblEmployees).set({ status: "inactive" }).where(eq(tblEmployees.id, id));
+      return true;
+    } catch (error) {
+      console.error("Error deleting employee:", error);
+      return false;
+    }
+  }
+  async importEmployees(employees) {
+    let success = 0;
+    const errors = [];
+    for (const employee of employees) {
+      try {
+        await db.insert(tblEmployees).values(employee).onDuplicateKeyUpdate({
+          set: {
+            name: employee.name,
+            email: employee.email,
+            phone: employee.phone,
+            department: employee.department,
+            position: employee.position,
+            updated_at: /* @__PURE__ */ new Date()
+          }
+        });
+        success++;
+      } catch (error) {
+        errors.push(`Failed to import employee ${employee.nik}: ${error}`);
+      }
+    }
+    return { success, errors };
+  }
+  // Loan request methods
+  async createLoanRequest(request) {
+    try {
+      if (!request.request_id) {
+        const requestCount = await db.select({ count: count() }).from(tblLoanRequests);
+        request.request_id = `LR-${String(requestCount[0].count + 1).padStart(6, "0")}`;
+      }
+      const results = await db.insert(tblLoanRequests).values(request);
+      const insertedId = results[0].insertId;
+      await this.logLoanAction(insertedId, "submitted", void 0, "Loan request submitted", void 0, "pending");
+      const newRequest = await db.select().from(tblLoanRequests).where(eq(tblLoanRequests.id, insertedId)).limit(1);
+      return newRequest[0];
+    } catch (error) {
+      console.error("Error creating loan request:", error);
+      throw new Error("Failed to create loan request");
+    }
+  }
+  async getLoanRequests(filters = {}) {
+    const { status, employeeNik, page = 1, limit = 25 } = filters;
+    try {
+      let query = db.select({
+        id: tblLoanRequests.id,
+        request_id: tblLoanRequests.request_id,
+        id_buku: tblLoanRequests.id_buku,
+        employee_nik: tblLoanRequests.employee_nik,
+        borrower_name: tblLoanRequests.borrower_name,
+        borrower_email: tblLoanRequests.borrower_email,
+        borrower_phone: tblLoanRequests.borrower_phone,
+        request_date: tblLoanRequests.request_date,
+        requested_return_date: tblLoanRequests.requested_return_date,
+        reason: tblLoanRequests.reason,
+        status: tblLoanRequests.status,
+        approved_by: tblLoanRequests.approved_by,
+        approval_date: tblLoanRequests.approval_date,
+        approval_notes: tblLoanRequests.approval_notes,
+        loan_date: tblLoanRequests.loan_date,
+        due_date: tblLoanRequests.due_date,
+        return_date: tblLoanRequests.return_date,
+        return_notes: tblLoanRequests.return_notes,
+        created_at: tblLoanRequests.created_at,
+        updated_at: tblLoanRequests.updated_at,
+        // Related data
+        book_title: tblBuku.title,
+        book_isbn: tblBuku.isbn,
+        employee_name: tblEmployees.name,
+        employee_department: tblEmployees.department,
+        approver_name: tblLogin.nama
+      }).from(tblLoanRequests).leftJoin(tblBuku, eq(tblLoanRequests.id_buku, tblBuku.id_buku)).leftJoin(tblEmployees, eq(tblLoanRequests.employee_nik, tblEmployees.nik)).leftJoin(tblLogin, eq(tblLoanRequests.approved_by, tblLogin.id_login));
+      const conditions = [];
+      if (status) {
+        conditions.push(eq(tblLoanRequests.status, status));
+      }
+      if (employeeNik) {
+        conditions.push(eq(tblLoanRequests.employee_nik, employeeNik));
+      }
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions));
+      }
+      const totalQuery = db.select({ count: count() }).from(tblLoanRequests);
+      if (conditions.length > 0) {
+        totalQuery.where(and(...conditions));
+      }
+      const totalResult = await totalQuery;
+      const total = totalResult[0].count;
+      const offset = (page - 1) * limit;
+      const requests = await query.orderBy(desc(tblLoanRequests.request_date)).limit(limit).offset(offset);
+      return { requests, total };
+    } catch (error) {
+      console.error("Error fetching loan requests:", error);
+      throw new Error("Failed to fetch loan requests");
+    }
+  }
+  async getLoanRequestById(id) {
+    try {
+      const results = await db.select({
+        id: tblLoanRequests.id,
+        request_id: tblLoanRequests.request_id,
+        id_buku: tblLoanRequests.id_buku,
+        employee_nik: tblLoanRequests.employee_nik,
+        borrower_name: tblLoanRequests.borrower_name,
+        borrower_email: tblLoanRequests.borrower_email,
+        borrower_phone: tblLoanRequests.borrower_phone,
+        request_date: tblLoanRequests.request_date,
+        requested_return_date: tblLoanRequests.requested_return_date,
+        reason: tblLoanRequests.reason,
+        status: tblLoanRequests.status,
+        approved_by: tblLoanRequests.approved_by,
+        approval_date: tblLoanRequests.approval_date,
+        approval_notes: tblLoanRequests.approval_notes,
+        loan_date: tblLoanRequests.loan_date,
+        due_date: tblLoanRequests.due_date,
+        return_date: tblLoanRequests.return_date,
+        return_notes: tblLoanRequests.return_notes,
+        created_at: tblLoanRequests.created_at,
+        updated_at: tblLoanRequests.updated_at,
+        // Related data
+        book_title: tblBuku.title,
+        book_isbn: tblBuku.isbn,
+        employee_name: tblEmployees.name,
+        employee_department: tblEmployees.department,
+        approver_name: tblLogin.nama
+      }).from(tblLoanRequests).leftJoin(tblBuku, eq(tblLoanRequests.id_buku, tblBuku.id_buku)).leftJoin(tblEmployees, eq(tblLoanRequests.employee_nik, tblEmployees.nik)).leftJoin(tblLogin, eq(tblLoanRequests.approved_by, tblLogin.id_login)).where(eq(tblLoanRequests.id, id)).limit(1);
+      return results[0];
+    } catch (error) {
+      console.error("Error fetching loan request by ID:", error);
+      throw new Error("Failed to fetch loan request");
+    }
+  }
+  async approveLoanRequest(id, adminId, notes) {
+    try {
+      const currentRequest = await this.getLoanRequestById(id);
+      if (!currentRequest) {
+        throw new Error("Loan request not found");
+      }
+      await db.update(tblLoanRequests).set({
+        status: "approved",
+        approved_by: adminId,
+        approval_date: /* @__PURE__ */ new Date(),
+        approval_notes: notes
+      }).where(eq(tblLoanRequests.id, id));
+      await this.logLoanAction(id, "approved", adminId, notes, "pending", "approved");
+      return true;
+    } catch (error) {
+      console.error("Error approving loan request:", error);
+      return false;
+    }
+  }
+  async rejectLoanRequest(id, adminId, notes) {
+    try {
+      const currentRequest = await this.getLoanRequestById(id);
+      if (!currentRequest) {
+        throw new Error("Loan request not found");
+      }
+      await db.update(tblLoanRequests).set({
+        status: "rejected",
+        approved_by: adminId,
+        approval_date: /* @__PURE__ */ new Date(),
+        approval_notes: notes
+      }).where(eq(tblLoanRequests.id, id));
+      await this.logLoanAction(id, "rejected", adminId, notes, "pending", "rejected");
+      return true;
+    } catch (error) {
+      console.error("Error rejecting loan request:", error);
+      return false;
+    }
+  }
+  async markBookAsLoaned(requestId, dueDate) {
+    try {
+      const currentRequest = await this.getLoanRequestById(requestId);
+      if (!currentRequest || currentRequest.status !== "approved") {
+        throw new Error("Invalid loan request for loaning");
+      }
+      await db.update(tblLoanRequests).set({
+        status: "on_loan",
+        loan_date: /* @__PURE__ */ new Date(),
+        due_date: dueDate
+      }).where(eq(tblLoanRequests.id, requestId));
+      await db.update(tblBuku).set({
+        tersedia: 0
+        // Mark as not available
+      }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+      await this.logLoanAction(requestId, "loaned", currentRequest.approved_by || void 0, "Book handed out to borrower", "approved", "on_loan");
+      return true;
+    } catch (error) {
+      console.error("Error marking book as loaned:", error);
+      return false;
+    }
+  }
+  async returnBook(requestId, returnNotes) {
+    try {
+      const currentRequest = await this.getLoanRequestById(requestId);
+      if (!currentRequest || currentRequest.status !== "on_loan") {
+        throw new Error("Invalid loan request for return");
+      }
+      await db.update(tblLoanRequests).set({
+        status: "returned",
+        return_date: /* @__PURE__ */ new Date(),
+        return_notes: returnNotes
+      }).where(eq(tblLoanRequests.id, requestId));
+      await db.update(tblBuku).set({
+        tersedia: 1
+        // Mark as available again
+      }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+      await this.logLoanAction(requestId, "returned", void 0, returnNotes, "on_loan", "returned");
+      return true;
+    } catch (error) {
+      console.error("Error returning book:", error);
+      return false;
+    }
+  }
+  // Loan history methods
+  async getLoanHistory(requestId) {
+    try {
+      return await db.select().from(tblLoanHistory).where(eq(tblLoanHistory.loan_request_id, requestId)).orderBy(desc(tblLoanHistory.action_date));
+    } catch (error) {
+      console.error("Error fetching loan history:", error);
+      return [];
+    }
+  }
+  async logLoanAction(requestId, action, performedBy, notes, oldStatus, newStatus) {
+    try {
+      await db.insert(tblLoanHistory).values({
+        loan_request_id: requestId,
+        action,
+        performed_by: performedBy,
+        notes,
+        old_status: oldStatus,
+        new_status: newStatus
+      });
+    } catch (error) {
+      console.error("Error logging loan action:", error);
     }
   }
 };
@@ -1086,6 +1448,18 @@ async function registerRoutes(app2) {
       res.status(500).json({ message: "Failed to initialize predefined categories" });
     }
   });
+  app2.post("/api/categories/cleanup", requireAuth, async (req, res) => {
+    const user = req.session.user;
+    if (!user || user.level !== "admin") {
+      return res.status(403).json({ message: "Forbidden: Only admin can cleanup categories" });
+    }
+    try {
+      await storage.cleanupCategories();
+      res.json({ message: "Categories cleaned up successfully - only predefined categories remain" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to cleanup categories" });
+    }
+  });
   app2.get("/api/locations", requireAuth, async (req, res) => {
     try {
       console.log("Fetching locations from database...");
@@ -1212,6 +1586,96 @@ async function registerRoutes(app2) {
       res.json({ message: "User deleted successfully" });
     } catch (error) {
       res.status(500).json({ message: "Failed to delete user" });
+    }
+  });
+  app2.get("/api/employees", async (req, res) => {
+    try {
+      const employees = await storage.getEmployees();
+      res.json(employees);
+    } catch (error) {
+      console.error("Error fetching employees:", error);
+      res.status(500).json({ message: "Failed to fetch employees" });
+    }
+  });
+  app2.get("/api/employees/:nik", async (req, res) => {
+    try {
+      const { nik } = req.params;
+      const employee = await storage.getEmployeeByNik(nik);
+      if (!employee) {
+        return res.status(404).json({ message: "Employee not found" });
+      }
+      res.json(employee);
+    } catch (error) {
+      console.error("Error fetching employee:", error);
+      res.status(500).json({ message: "Failed to fetch employee" });
+    }
+  });
+  app2.post("/api/loan-requests", async (req, res) => {
+    try {
+      const loanRequest = await storage.createLoanRequest(req.body);
+      res.status(201).json(loanRequest);
+    } catch (error) {
+      console.error("Error creating loan request:", error);
+      res.status(500).json({ message: "Failed to create loan request" });
+    }
+  });
+  app2.get("/api/loan-requests", async (req, res) => {
+    try {
+      const { status, employeeNik, page = "1", limit = "25" } = req.query;
+      const filters = {
+        status,
+        employeeNik,
+        page: parseInt(page),
+        limit: parseInt(limit)
+      };
+      const result = await storage.getLoanRequests(filters);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching loan requests:", error);
+      res.status(500).json({ message: "Failed to fetch loan requests" });
+    }
+  });
+  app2.get("/api/loan-requests/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const loanRequest = await storage.getLoanRequestById(parseInt(id));
+      if (!loanRequest) {
+        return res.status(404).json({ message: "Loan request not found" });
+      }
+      res.json(loanRequest);
+    } catch (error) {
+      console.error("Error fetching loan request:", error);
+      res.status(500).json({ message: "Failed to fetch loan request" });
+    }
+  });
+  app2.post("/api/loan-requests/:id/approve", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.user.id_login;
+      const success = await storage.approveLoanRequest(parseInt(id), adminId, notes);
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      res.json({ message: "Loan request approved successfully" });
+    } catch (error) {
+      console.error("Error approving loan request:", error);
+      res.status(500).json({ message: "Failed to approve loan request" });
+    }
+  });
+  app2.post("/api/loan-requests/:id/reject", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.user.id_login;
+      const success = await storage.rejectLoanRequest(parseInt(id), adminId, notes);
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      res.json({ message: "Loan request rejected successfully" });
+    } catch (error) {
+      console.error("Error rejecting loan request:", error);
+      res.status(500).json({ message: "Failed to reject loan request" });
     }
   });
   const httpServer = createServer(app2);

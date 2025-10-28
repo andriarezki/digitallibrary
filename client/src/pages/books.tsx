@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -37,6 +38,7 @@ interface BooksResponse {
 }
 
 export default function BooksPage() {
+  const [, setLocation] = useLocation();
   const user = useUser();
   const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
 
@@ -440,15 +442,25 @@ export default function BooksPage() {
       <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">Document Repository</h1>
-          {isAdminOrPetugas && (
+          <div className="flex gap-3">
             <Button 
-              onClick={() => setAddDialogOpen(true)}
-              className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              onClick={() => setLocation('/loan-request')}
+              variant="outline"
+              className="px-4 py-2 rounded-lg text-sm font-medium"
             >
-              <Plus className="w-4 h-4 mr-2" />
-              Add New Document
+              <FileText className="w-4 h-4 mr-2" />
+              Request Loan
             </Button>
-          )}
+            {isAdminOrPetugas && (
+              <Button 
+                onClick={() => setAddDialogOpen(true)}
+                className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add New Document
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 

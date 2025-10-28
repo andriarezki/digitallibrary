@@ -1,5 +1,34 @@
 import { db } from "./db";
-import { tblLogin, tblBuku, tblKategori, tblLokasi, tblUserActivity, tblPdfViews, tblSiteVisitors, type Login, type Buku, type BukuWithDetails, type Kategori, type Lokasi, type InsertBuku, type UserActivity, type PdfView, type SiteVisitor, type InsertPdfView, type InsertSiteVisitor } from "@shared/schema";
+import { 
+  tblLogin, 
+  tblBuku, 
+  tblKategori, 
+  tblLokasi, 
+  tblUserActivity, 
+  tblPdfViews, 
+  tblSiteVisitors,
+  tblEmployees,
+  tblLoanRequests,
+  tblLoanHistory,
+  type Login, 
+  type Buku, 
+  type BukuWithDetails, 
+  type Kategori, 
+  type Lokasi, 
+  type InsertBuku, 
+  type UserActivity, 
+  type PdfView, 
+  type SiteVisitor, 
+  type InsertPdfView, 
+  type InsertSiteVisitor,
+  type Employee,
+  type InsertEmployee,
+  type LoanRequest,
+  type InsertLoanRequest,
+  type LoanRequestWithDetails,
+  type LoanHistory,
+  type InsertLoanHistory
+} from "@shared/schema";
 import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
 
@@ -107,6 +136,7 @@ export interface IStorage {
   getCategoryById(id: number): Promise<Kategori | undefined>;
   createCategory(data: { nama_kategori: string }): Promise<Kategori>;
   ensurePredefinedCategories(): Promise<void>;
+  cleanupCategories(): Promise<void>;
   updateCategory(id: number, data: { nama_kategori: string }): Promise<void>;
   deleteCategory(id: number): Promise<boolean>;
   getTopCategories(limit: number): Promise<Array<{ id: number; name: string; count: number }>>;
@@ -141,6 +171,41 @@ export interface IStorage {
     siteVisitorCount: number;
     pdfViewCount: number;
   }>;
+
+  // ===== LOANS SYSTEM METHODS =====
+  
+  // Employee methods
+  getEmployees(): Promise<Employee[]>;
+  getEmployeeByNik(nik: string): Promise<Employee | undefined>;
+  createEmployee(employee: InsertEmployee): Promise<Employee>;
+  updateEmployee(id: number, employee: Partial<InsertEmployee>): Promise<Employee | undefined>;
+  deleteEmployee(id: number): Promise<boolean>;
+  importEmployees(employees: InsertEmployee[]): Promise<{ success: number; errors: string[] }>;
+
+  // Loan request methods
+  createLoanRequest(request: InsertLoanRequest): Promise<LoanRequest>;
+  getLoanRequests(filters?: {
+    status?: string;
+    employeeNik?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<{ requests: LoanRequestWithDetails[]; total: number }>;
+  getLoanRequestById(id: number): Promise<LoanRequestWithDetails | undefined>;
+  approveLoanRequest(id: number, adminId: number, notes?: string): Promise<boolean>;
+  rejectLoanRequest(id: number, adminId: number, notes?: string): Promise<boolean>;
+  markBookAsLoaned(requestId: number, dueDate: Date): Promise<boolean>;
+  returnBook(requestId: number, returnNotes?: string): Promise<boolean>;
+
+  // Loan history methods
+  getLoanHistory(requestId: number): Promise<LoanHistory[]>;
+  logLoanAction(
+    requestId: number,
+    action: string,
+    performedBy?: number,
+    notes?: string,
+    oldStatus?: string,
+    newStatus?: string
+  ): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -514,6 +579,55 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  async cleanupCategories(): Promise<void> {
+    const predefinedCategories = [
+      "Book",
+      "Journal", 
+      "Proceeding",
+      "Audio Visual",
+      "Catalogue",
+      "Flyer",
+      "Training",
+      "Poster", 
+      "Thesis",
+      "Report",
+      "Newspaper"
+    ];
+
+    try {
+      // Create an "Uncategorized" category for books that lose their category
+      const uncategorizedCategory = await this.createCategory({ nama_kategori: "Uncategorized" });
+      
+      // Get categories that will be deleted
+      const categoriesToDelete = await db.select()
+        .from(tblKategori)
+        .where(sql`nama_kategori NOT IN (${predefinedCategories.map(cat => `'${cat}'`).join(',')})`);
+
+      // Update books using categories that will be deleted
+      for (const category of categoriesToDelete) {
+        if (category.nama_kategori !== "Uncategorized") {
+          await db.update(tblBuku)
+            .set({ id_kategori: uncategorizedCategory.id_kategori })
+            .where(eq(tblBuku.id_kategori, category.id_kategori));
+          
+          console.log(`Moved books from category "${category.nama_kategori}" to "Uncategorized"`);
+        }
+      }
+
+      // Delete all non-predefined categories (except Uncategorized)
+      await db.delete(tblKategori)
+        .where(sql`nama_kategori NOT IN (${[...predefinedCategories, "Uncategorized"].map(cat => `'${cat}'`).join(',')})`);
+
+      // Ensure all predefined categories exist
+      await this.ensurePredefinedCategories();
+      
+      console.log('Categories cleanup completed - only predefined categories remain');
+    } catch (error) {
+      console.error('Error during category cleanup:', error);
+      throw error;
+    }
+  }
+
   async deleteCategory(id: number): Promise<boolean> {
     const result = await db.delete(tblKategori)
       .where(eq(tblKategori.id_kategori, id));
@@ -851,6 +965,354 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error('Error fetching top categories by views:', error);
       return [];
+    }
+  }
+
+  // ===== LOANS SYSTEM IMPLEMENTATIONS =====
+
+  // Employee methods
+  async getEmployees(): Promise<Employee[]> {
+    return await db.select().from(tblEmployees).where(eq(tblEmployees.status, 'active')).orderBy(tblEmployees.name);
+  }
+
+  async getEmployeeByNik(nik: string): Promise<Employee | undefined> {
+    const results = await db.select().from(tblEmployees).where(eq(tblEmployees.nik, nik)).limit(1);
+    return results[0];
+  }
+
+  async createEmployee(employee: InsertEmployee): Promise<Employee> {
+    const results = await db.insert(tblEmployees).values(employee);
+    const insertedId = results[0].insertId;
+    const newEmployee = await db.select().from(tblEmployees).where(eq(tblEmployees.id, insertedId)).limit(1);
+    return newEmployee[0];
+  }
+
+  async updateEmployee(id: number, employee: Partial<InsertEmployee>): Promise<Employee | undefined> {
+    await db.update(tblEmployees).set(employee).where(eq(tblEmployees.id, id));
+    const updated = await db.select().from(tblEmployees).where(eq(tblEmployees.id, id)).limit(1);
+    return updated[0];
+  }
+
+  async deleteEmployee(id: number): Promise<boolean> {
+    try {
+      await db.update(tblEmployees).set({ status: 'inactive' }).where(eq(tblEmployees.id, id));
+      return true;
+    } catch (error) {
+      console.error('Error deleting employee:', error);
+      return false;
+    }
+  }
+
+  async importEmployees(employees: InsertEmployee[]): Promise<{ success: number; errors: string[] }> {
+    let success = 0;
+    const errors: string[] = [];
+
+    for (const employee of employees) {
+      try {
+        await db.insert(tblEmployees).values(employee).onDuplicateKeyUpdate({
+          set: {
+            name: employee.name,
+            email: employee.email,
+            phone: employee.phone,
+            department: employee.department,
+            position: employee.position,
+            updated_at: new Date()
+          }
+        });
+        success++;
+      } catch (error) {
+        errors.push(`Failed to import employee ${employee.nik}: ${error}`);
+      }
+    }
+
+    return { success, errors };
+  }
+
+  // Loan request methods
+  async createLoanRequest(request: InsertLoanRequest): Promise<LoanRequest> {
+    try {
+      // Generate request ID if not provided
+      if (!request.request_id) {
+        const requestCount = await db.select({ count: count() }).from(tblLoanRequests);
+        request.request_id = `LR-${String(requestCount[0].count + 1).padStart(6, '0')}`;
+      }
+
+      const results = await db.insert(tblLoanRequests).values(request);
+      const insertedId = results[0].insertId;
+      
+      // Log the request submission
+      await this.logLoanAction(insertedId, 'submitted', undefined, 'Loan request submitted', undefined, 'pending');
+      
+      const newRequest = await db.select().from(tblLoanRequests).where(eq(tblLoanRequests.id, insertedId)).limit(1);
+      return newRequest[0];
+    } catch (error) {
+      console.error('Error creating loan request:', error);
+      throw new Error('Failed to create loan request');
+    }
+  }
+
+  async getLoanRequests(filters: {
+    status?: string;
+    employeeNik?: string;
+    page?: number;
+    limit?: number;
+  } = {}): Promise<{ requests: LoanRequestWithDetails[]; total: number }> {
+    const { status, employeeNik, page = 1, limit = 25 } = filters;
+    
+    try {
+      let query = db
+        .select({
+          id: tblLoanRequests.id,
+          request_id: tblLoanRequests.request_id,
+          id_buku: tblLoanRequests.id_buku,
+          employee_nik: tblLoanRequests.employee_nik,
+          borrower_name: tblLoanRequests.borrower_name,
+          borrower_email: tblLoanRequests.borrower_email,
+          borrower_phone: tblLoanRequests.borrower_phone,
+          request_date: tblLoanRequests.request_date,
+          requested_return_date: tblLoanRequests.requested_return_date,
+          reason: tblLoanRequests.reason,
+          status: tblLoanRequests.status,
+          approved_by: tblLoanRequests.approved_by,
+          approval_date: tblLoanRequests.approval_date,
+          approval_notes: tblLoanRequests.approval_notes,
+          loan_date: tblLoanRequests.loan_date,
+          due_date: tblLoanRequests.due_date,
+          return_date: tblLoanRequests.return_date,
+          return_notes: tblLoanRequests.return_notes,
+          created_at: tblLoanRequests.created_at,
+          updated_at: tblLoanRequests.updated_at,
+          // Related data
+          book_title: tblBuku.title,
+          book_isbn: tblBuku.isbn,
+          employee_name: tblEmployees.name,
+          employee_department: tblEmployees.department,
+          approver_name: tblLogin.nama,
+        })
+        .from(tblLoanRequests)
+        .leftJoin(tblBuku, eq(tblLoanRequests.id_buku, tblBuku.id_buku))
+        .leftJoin(tblEmployees, eq(tblLoanRequests.employee_nik, tblEmployees.nik))
+        .leftJoin(tblLogin, eq(tblLoanRequests.approved_by, tblLogin.id_login));
+
+      // Apply filters
+      const conditions = [];
+      if (status) {
+        conditions.push(eq(tblLoanRequests.status, status as any));
+      }
+      if (employeeNik) {
+        conditions.push(eq(tblLoanRequests.employee_nik, employeeNik));
+      }
+
+      if (conditions.length > 0) {
+        query = query.where(and(...conditions)) as any;
+      }
+
+      // Get total count
+      const totalQuery = db.select({ count: count() }).from(tblLoanRequests);
+      if (conditions.length > 0) {
+        totalQuery.where(and(...conditions));
+      }
+      const totalResult = await totalQuery;
+      const total = totalResult[0].count;
+
+      // Get paginated results
+      const offset = (page - 1) * limit;
+      const requests = await query
+        .orderBy(desc(tblLoanRequests.request_date))
+        .limit(limit)
+        .offset(offset);
+
+      return { requests, total };
+    } catch (error) {
+      console.error('Error fetching loan requests:', error);
+      throw new Error('Failed to fetch loan requests');
+    }
+  }
+
+  async getLoanRequestById(id: number): Promise<LoanRequestWithDetails | undefined> {
+    try {
+      const results = await db
+        .select({
+          id: tblLoanRequests.id,
+          request_id: tblLoanRequests.request_id,
+          id_buku: tblLoanRequests.id_buku,
+          employee_nik: tblLoanRequests.employee_nik,
+          borrower_name: tblLoanRequests.borrower_name,
+          borrower_email: tblLoanRequests.borrower_email,
+          borrower_phone: tblLoanRequests.borrower_phone,
+          request_date: tblLoanRequests.request_date,
+          requested_return_date: tblLoanRequests.requested_return_date,
+          reason: tblLoanRequests.reason,
+          status: tblLoanRequests.status,
+          approved_by: tblLoanRequests.approved_by,
+          approval_date: tblLoanRequests.approval_date,
+          approval_notes: tblLoanRequests.approval_notes,
+          loan_date: tblLoanRequests.loan_date,
+          due_date: tblLoanRequests.due_date,
+          return_date: tblLoanRequests.return_date,
+          return_notes: tblLoanRequests.return_notes,
+          created_at: tblLoanRequests.created_at,
+          updated_at: tblLoanRequests.updated_at,
+          // Related data
+          book_title: tblBuku.title,
+          book_isbn: tblBuku.isbn,
+          employee_name: tblEmployees.name,
+          employee_department: tblEmployees.department,
+          approver_name: tblLogin.nama,
+        })
+        .from(tblLoanRequests)
+        .leftJoin(tblBuku, eq(tblLoanRequests.id_buku, tblBuku.id_buku))
+        .leftJoin(tblEmployees, eq(tblLoanRequests.employee_nik, tblEmployees.nik))
+        .leftJoin(tblLogin, eq(tblLoanRequests.approved_by, tblLogin.id_login))
+        .where(eq(tblLoanRequests.id, id))
+        .limit(1);
+
+      return results[0];
+    } catch (error) {
+      console.error('Error fetching loan request by ID:', error);
+      throw new Error('Failed to fetch loan request');
+    }
+  }
+
+  async approveLoanRequest(id: number, adminId: number, notes?: string): Promise<boolean> {
+    try {
+      const currentRequest = await this.getLoanRequestById(id);
+      if (!currentRequest) {
+        throw new Error('Loan request not found');
+      }
+
+      await db.update(tblLoanRequests).set({
+        status: 'approved',
+        approved_by: adminId,
+        approval_date: new Date(),
+        approval_notes: notes,
+      }).where(eq(tblLoanRequests.id, id));
+
+      // Log the approval action
+      await this.logLoanAction(id, 'approved', adminId, notes, 'pending', 'approved');
+
+      return true;
+    } catch (error) {
+      console.error('Error approving loan request:', error);
+      return false;
+    }
+  }
+
+  async rejectLoanRequest(id: number, adminId: number, notes?: string): Promise<boolean> {
+    try {
+      const currentRequest = await this.getLoanRequestById(id);
+      if (!currentRequest) {
+        throw new Error('Loan request not found');
+      }
+
+      await db.update(tblLoanRequests).set({
+        status: 'rejected',
+        approved_by: adminId,
+        approval_date: new Date(),
+        approval_notes: notes,
+      }).where(eq(tblLoanRequests.id, id));
+
+      // Log the rejection action
+      await this.logLoanAction(id, 'rejected', adminId, notes, 'pending', 'rejected');
+
+      return true;
+    } catch (error) {
+      console.error('Error rejecting loan request:', error);
+      return false;
+    }
+  }
+
+  async markBookAsLoaned(requestId: number, dueDate: Date): Promise<boolean> {
+    try {
+      const currentRequest = await this.getLoanRequestById(requestId);
+      if (!currentRequest || currentRequest.status !== 'approved') {
+        throw new Error('Invalid loan request for loaning');
+      }
+
+      // Update loan request status
+      await db.update(tblLoanRequests).set({
+        status: 'on_loan',
+        loan_date: new Date(),
+        due_date: dueDate,
+      }).where(eq(tblLoanRequests.id, requestId));
+
+      // Update book availability
+      await db.update(tblBuku).set({
+        tersedia: 0 // Mark as not available
+      }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+
+      // Log the loaning action
+      await this.logLoanAction(requestId, 'loaned', currentRequest.approved_by || undefined, 'Book handed out to borrower', 'approved', 'on_loan');
+
+      return true;
+    } catch (error) {
+      console.error('Error marking book as loaned:', error);
+      return false;
+    }
+  }
+
+  async returnBook(requestId: number, returnNotes?: string): Promise<boolean> {
+    try {
+      const currentRequest = await this.getLoanRequestById(requestId);
+      if (!currentRequest || currentRequest.status !== 'on_loan') {
+        throw new Error('Invalid loan request for return');
+      }
+
+      // Update loan request status
+      await db.update(tblLoanRequests).set({
+        status: 'returned',
+        return_date: new Date(),
+        return_notes: returnNotes,
+      }).where(eq(tblLoanRequests.id, requestId));
+
+      // Update book availability
+      await db.update(tblBuku).set({
+        tersedia: 1 // Mark as available again
+      }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+
+      // Log the return action
+      await this.logLoanAction(requestId, 'returned', undefined, returnNotes, 'on_loan', 'returned');
+
+      return true;
+    } catch (error) {
+      console.error('Error returning book:', error);
+      return false;
+    }
+  }
+
+  // Loan history methods
+  async getLoanHistory(requestId: number): Promise<LoanHistory[]> {
+    try {
+      return await db
+        .select()
+        .from(tblLoanHistory)
+        .where(eq(tblLoanHistory.loan_request_id, requestId))
+        .orderBy(desc(tblLoanHistory.action_date));
+    } catch (error) {
+      console.error('Error fetching loan history:', error);
+      return [];
+    }
+  }
+
+  async logLoanAction(
+    requestId: number,
+    action: string,
+    performedBy?: number,
+    notes?: string,
+    oldStatus?: string,
+    newStatus?: string
+  ): Promise<void> {
+    try {
+      await db.insert(tblLoanHistory).values({
+        loan_request_id: requestId,
+        action: action as any,
+        performed_by: performedBy,
+        notes: notes,
+        old_status: oldStatus as any,
+        new_status: newStatus as any,
+      });
+    } catch (error) {
+      console.error('Error logging loan action:', error);
     }
   }
 }

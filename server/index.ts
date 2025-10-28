@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import compression from "compression";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
 
 const app = express();
 
@@ -51,6 +52,14 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Initialize predefined categories on server start
+  try {
+    await storage.ensurePredefinedCategories();
+    log("Predefined categories initialized successfully");
+  } catch (error) {
+    log(`Warning: Failed to initialize predefined categories: ${error}`);
+  }
+
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

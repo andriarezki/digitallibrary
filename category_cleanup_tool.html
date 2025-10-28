@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Category Cleanup Tool</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        .button { background: #dc3545; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin: 10px; }
+        .button:hover { background: #c82333; }
+        .success { color: green; font-weight: bold; }
+        .error { color: red; font-weight: bold; }
+        .warning { background: #fff3cd; border: 1px solid #ffeaa7; padding: 15px; margin: 20px 0; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>Category Cleanup Tool</h1>
+    
+    <div class="warning">
+        <strong>⚠️ Warning:</strong> This will remove all categories except your predefined ones:
+        <br>Book, Journal, Proceeding, Audio Visual, Catalogue, Flyer, Training, Poster, Thesis, Report, Newspaper
+        <br><br>
+        Books using deleted categories will be moved to "Uncategorized".
+    </div>
+    
+    <button class="button" onclick="cleanupCategories()">🧹 Clean Up Categories</button>
+    <button class="button" onclick="previewCleanup()" style="background: #007bff;">👁️ Preview Changes</button>
+    
+    <div id="result"></div>
+    
+    <script>
+        async function cleanupCategories() {
+            if (!confirm('Are you sure you want to clean up categories? This will remove all non-predefined categories!')) {
+                return;
+            }
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>🔄 Cleaning up categories...</p>';
+            
+            try {
+                const response = await fetch('/api/categories/cleanup', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    resultDiv.innerHTML = `<p class="success">✅ ${data.message}</p>`;
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 2000);
+                } else {
+                    resultDiv.innerHTML = `<p class="error">❌ Error: ${data.message}</p>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">❌ Network error: ${error.message}</p>`;
+            }
+        }
+        
+        async function previewCleanup() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>🔄 Loading current categories...</p>';
+            
+            try {
+                const response = await fetch('/api/categories');
+                const categories = await response.json();
+                
+                const predefined = ['Book', 'Journal', 'Proceeding', 'Audio Visual', 'Catalogue', 'Flyer', 'Training', 'Poster', 'Thesis', 'Report', 'Newspaper'];
+                
+                const toKeep = categories.filter(cat => predefined.includes(cat.nama_kategori));
+                const toDelete = categories.filter(cat => !predefined.includes(cat.nama_kategori));
+                
+                let html = '<h3>📋 Preview of Changes:</h3>';
+                html += `<p><strong>Categories to keep (${toKeep.length}):</strong></p>`;
+                html += '<ul>';
+                toKeep.forEach(cat => {
+                    html += `<li style="color: green;">✅ ${cat.nama_kategori}</li>`;
+                });
+                html += '</ul>';
+                
+                html += `<p><strong>Categories to delete (${toDelete.length}):</strong></p>`;
+                html += '<ul>';
+                toDelete.forEach(cat => {
+                    html += `<li style="color: red;">❌ ${cat.nama_kategori}</li>`;
+                });
+                html += '</ul>';
+                
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = `<p class="error">❌ Error loading categories: ${error.message}</p>`;
+            }
+        }
+        
+        // Auto-load preview on page load
+        window.onload = previewCleanup;
+    </script>
+</body>
+</html>
