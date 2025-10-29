@@ -8,6 +8,7 @@ import {
   tblPdfViews, 
   tblSiteVisitors,
   tblEmployees,
+  tblStaff,
   tblLoanRequests,
   tblLoanHistory,
   type Login, 
@@ -23,6 +24,8 @@ import {
   type InsertSiteVisitor,
   type Employee,
   type InsertEmployee,
+  type Staff,
+  type InsertStaff,
   type LoanRequest,
   type InsertLoanRequest,
   type LoanRequestWithDetails,
@@ -125,7 +128,9 @@ export interface IStorage {
 
   // Books methods
   getBooks(page: number, limit: number, search?: string, categoryId?: number, lokasiId?: number, departmentFilter?: string, yearFilter?: string): Promise<{ books: BukuWithDetails[], total: number }>;
+  getAvailableBooks(search?: string, limit?: number): Promise<{ books: BukuWithDetails[]; total: number }>;
   getBookById(id: number): Promise<BukuWithDetails | undefined>;
+  getBookByPdfFilename(filename: string): Promise<BukuWithDetails | undefined>;
   createBook(book: InsertBuku): Promise<Buku>;
   updateBook(id: number, book: Partial<InsertBuku>): Promise<Buku | undefined>;
   deleteBook(id: number): Promise<boolean>;
@@ -152,8 +157,7 @@ export interface IStorage {
   getDepartments(): Promise<Array<{ department: string }>>;
   getDocumentsByDepartment(): Promise<Array<{ department: string; count: number }>>;
   getMostReadByCategory(): Promise<Array<{ category: string; views: number }>>;
-
-  // User Activity methods
+  getPdfTrackingDebugData(): Promise<any>;
   logUserActivity(userId: number, activityType: string, ipAddress?: string, userAgent?: string): Promise<void>;
   getMonthlyUserActivity(): Promise<Array<{ month: string; activeUsers: number }>>;
   getWeeklyBooksAdded(): Promise<Array<{ week: string; booksAdded: number }>>;
@@ -195,6 +199,10 @@ export interface IStorage {
   rejectLoanRequest(id: number, adminId: number, notes?: string): Promise<boolean>;
   markBookAsLoaned(requestId: number, dueDate: Date): Promise<boolean>;
   returnBook(requestId: number, returnNotes?: string): Promise<boolean>;
+  returnLoanRequest(id: number, adminId: number): Promise<boolean>;
+  getLoanRequestStats(): Promise<{ pending: number; active: number; completed: number; overdue: number }>;
+  getUserLoanRequestStats(userId: number): Promise<{ pending: number; approved: number; returned: number }>;
+  getUserLoanRequestStatsByNik(employeeNik: string): Promise<{ pending: number; approved: number; returned: number }>;
 
   // Loan history methods
   getLoanHistory(requestId: number): Promise<LoanHistory[]>;
@@ -374,6 +382,13 @@ export class DatabaseStorage implements IStorage {
 
     const offset = (page - 1) * limit;
 
+    const availabilityExpression = sql<number>`CASE 
+      WHEN ${tblBuku.tersedia} = 1 AND NOT EXISTS (
+        SELECT 1 FROM ${tblLoanRequests}
+        WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
+          AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
+      ) THEN 1 ELSE 0 END`;
+
     const booksQuery = db
       .select({
         id_buku: tblBuku.id_buku,
@@ -390,7 +405,7 @@ export class DatabaseStorage implements IStorage {
         isi: tblBuku.isi,
         jml: tblBuku.jml,
         tgl_masuk: tblBuku.tgl_masuk,
-        tersedia: tblBuku.tersedia,
+        tersedia: availabilityExpression,
         department: tblBuku.department,
         file_type: tblBuku.file_type, // Restored - column exists on server
         kategori_nama: tblKategori.nama_kategori,
@@ -424,6 +439,61 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async getAvailableBooks(search?: string, limit: number = 20): Promise<{ books: BukuWithDetails[]; total: number }> {
+    const availabilityCondition = sql`(${tblBuku.tersedia} = 1 AND NOT EXISTS (
+      SELECT 1 FROM ${tblLoanRequests}
+      WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
+        AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
+    ))`;
+    const likeQuery = search ? `%${search}%` : undefined;
+    const searchCondition = likeQuery
+      ? sql`(${tblBuku.title} LIKE ${likeQuery} OR ${tblBuku.pengarang} LIKE ${likeQuery} OR ${tblBuku.penerbit} LIKE ${likeQuery} OR ${tblBuku.isbn} LIKE ${likeQuery})`
+      : undefined;
+    const whereClause = searchCondition ? and(availabilityCondition, searchCondition) : availabilityCondition;
+
+    const booksQuery = db
+      .select({
+        id_buku: tblBuku.id_buku,
+        buku_id: tblBuku.buku_id,
+        id_kategori: tblBuku.id_kategori,
+        id_lokasi: tblBuku.id_lokasi,
+        sampul: tblBuku.sampul,
+        isbn: tblBuku.isbn,
+        lampiran: tblBuku.lampiran,
+        title: tblBuku.title,
+        penerbit: tblBuku.penerbit,
+        pengarang: tblBuku.pengarang,
+        thn_buku: tblBuku.thn_buku,
+        isi: tblBuku.isi,
+        jml: tblBuku.jml,
+        tgl_masuk: tblBuku.tgl_masuk,
+        tersedia: tblBuku.tersedia,
+        department: tblBuku.department,
+        file_type: tblBuku.file_type,
+        kategori_nama: tblKategori.nama_kategori,
+        lokasi_nama: tblLokasi.nama_lokasi,
+      })
+      .from(tblBuku)
+      .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
+      .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
+      .where(whereClause)
+      .orderBy(asc(tblBuku.title))
+      .limit(limit);
+
+    const countQuery = db
+      .select({ count: count() })
+      .from(tblBuku)
+      .where(whereClause);
+
+    const [books, totalResult] = await Promise.all([booksQuery, countQuery]);
+    const total = totalResult[0]?.count ?? 0;
+
+    return {
+      books,
+      total: Number(total)
+    };
+  }
+
   async getBookById(id: number): Promise<BukuWithDetails | undefined> {
     const results = await db
       .select({
@@ -451,6 +521,38 @@ export class DatabaseStorage implements IStorage {
       .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
       .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
       .where(eq(tblBuku.id_buku, id))
+      .limit(1);
+
+    return results[0];
+  }
+
+  async getBookByPdfFilename(filename: string): Promise<BukuWithDetails | undefined> {
+    const results = await db
+      .select({
+        id_buku: tblBuku.id_buku,
+        buku_id: tblBuku.buku_id,
+        id_kategori: tblBuku.id_kategori,
+        id_lokasi: tblBuku.id_lokasi,
+        sampul: tblBuku.sampul,
+        isbn: tblBuku.isbn,
+        lampiran: tblBuku.lampiran,
+        title: tblBuku.title,
+        penerbit: tblBuku.penerbit,
+        pengarang: tblBuku.pengarang,
+        thn_buku: tblBuku.thn_buku,
+        isi: tblBuku.isi,
+        jml: tblBuku.jml,
+        tgl_masuk: tblBuku.tgl_masuk,
+        tersedia: tblBuku.tersedia,
+        department: tblBuku.department,
+        file_type: tblBuku.file_type,
+        kategori_nama: tblKategori.nama_kategori,
+        lokasi_nama: tblLokasi.nama_lokasi,
+      })
+      .from(tblBuku)
+      .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
+      .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
+      .where(eq(tblBuku.lampiran, filename))
       .limit(1);
 
     return results[0];
@@ -707,15 +809,16 @@ export class DatabaseStorage implements IStorage {
       };
     }
 
-    const [booksCount, availableCount, categoriesCount] = await Promise.all([
+    const [booksCount, availableCount, categoriesCount, activeLoanCount] = await Promise.all([
       db.select({ count: count() }).from(tblBuku),
       db.select({ count: count() }).from(tblBuku).where(eq(tblBuku.tersedia, 1)),
-      db.select({ count: count() }).from(tblKategori)
+      db.select({ count: count() }).from(tblKategori),
+      db.select({ count: count() }).from(tblLoanRequests).where(eq(tblLoanRequests.status, 'approved'))
     ]);
 
     const totalBooks = booksCount[0].count;
     const availableBooks = availableCount[0].count;
-    const onLoan = totalBooks - availableBooks;
+    const onLoan = activeLoanCount[0].count; // Use actual approved loans count
     const categories = categoriesCount[0].count;
 
     const stats = {
@@ -790,6 +893,59 @@ export class DatabaseStorage implements IStorage {
       .limit(5);
     
     return results.filter(r => r.category) as Array<{ category: string; views: number }>;
+  }
+
+  async getPdfTrackingDebugData(): Promise<any> {
+    try {
+      // Get recent PDF views with category info
+      const recentViews = await db
+        .select({
+          id: tblPdfViews.id,
+          book_id: tblPdfViews.book_id,
+          category_id: tblPdfViews.category_id,
+          category_name: tblKategori.nama_kategori,
+          book_title: tblBuku.title,
+          viewed_at: tblPdfViews.view_date,
+          ip_address: tblPdfViews.ip_address
+        })
+        .from(tblPdfViews)
+        .leftJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori))
+        .leftJoin(tblBuku, eq(tblPdfViews.book_id, tblBuku.id_buku))
+        .orderBy(desc(tblPdfViews.view_date))
+        .limit(20);
+
+      // Get category distribution in PDF views
+      const categoryDistribution = await db
+        .select({
+          category: tblKategori.nama_kategori,
+          view_count: count(tblPdfViews.id)
+        })
+        .from(tblPdfViews)
+        .leftJoin(tblKategori, eq(tblPdfViews.category_id, tblKategori.id_kategori))
+        .groupBy(tblPdfViews.category_id, tblKategori.nama_kategori)
+        .orderBy(desc(count(tblPdfViews.id)));
+
+      // Get book category distribution
+      const bookCategoryDistribution = await db
+        .select({
+          category: tblKategori.nama_kategori,
+          book_count: count(tblBuku.id_buku)
+        })
+        .from(tblBuku)
+        .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
+        .groupBy(tblBuku.id_kategori, tblKategori.nama_kategori)
+        .orderBy(desc(count(tblBuku.id_buku)));
+
+      return {
+        recentViews,
+        categoryDistribution,
+        bookCategoryDistribution,
+        totalPdfViews: recentViews.length > 0 ? await db.select({ count: count() }).from(tblPdfViews).then(r => r[0].count) : 0
+      };
+    } catch (error) {
+      console.error('Error getting PDF tracking debug data:', error);
+      return { error: error instanceof Error ? error.message : 'Unknown error' };
+    }
   }
 
   async logUserActivity(userId: number, activityType: string, ipAddress?: string, userAgent?: string): Promise<void> {
@@ -1131,6 +1287,13 @@ export class DatabaseStorage implements IStorage {
 
   async getLoanRequestById(id: number): Promise<LoanRequestWithDetails | undefined> {
     try {
+      console.log('getLoanRequestById called with id:', id, typeof id);
+      
+      if (isNaN(id) || !Number.isFinite(id)) {
+        console.error('Invalid ID passed to getLoanRequestById:', id);
+        throw new Error(`Invalid ID: ${id}`);
+      }
+      
       const results = await db
         .select({
           id: tblLoanRequests.id,
@@ -1191,6 +1354,20 @@ export class DatabaseStorage implements IStorage {
       // Log the approval action
       await this.logLoanAction(id, 'approved', adminId, notes, 'pending', 'approved');
 
+      // Update document repository (book) status to not available when approved
+      try {
+        if (currentRequest.id_buku) {
+          await db.update(tblBuku).set({
+            tersedia: 0 // mark as not available in repository
+          }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+        }
+      } catch (buchErr) {
+        console.error('Error updating book availability on approve:', buchErr);
+      }
+
+      // Clear dashboard stats cache so it reflects the new loan count
+      cache.delete('dashboard_stats');
+
       return true;
     } catch (error) {
       console.error('Error approving loan request:', error);
@@ -1214,6 +1391,9 @@ export class DatabaseStorage implements IStorage {
 
       // Log the rejection action
       await this.logLoanAction(id, 'rejected', adminId, notes, 'pending', 'rejected');
+
+      // Clear dashboard stats cache
+      cache.delete('dashboard_stats');
 
       return true;
     } catch (error) {
@@ -1315,6 +1495,279 @@ export class DatabaseStorage implements IStorage {
       console.error('Error logging loan action:', error);
     }
   }
+
+  async returnLoanRequest(id: number, adminId: number): Promise<boolean> {
+    try {
+      const currentRequest = await this.getLoanRequestById(id);
+      if (!currentRequest) {
+        throw new Error('Loan request not found');
+      }
+
+      // Update loan request status to returned
+      await db.update(tblLoanRequests).set({
+        status: 'returned',
+        return_date: new Date(),
+        approved_by: adminId,
+      }).where(eq(tblLoanRequests.id, id));
+
+      // When admin marks as returned, set the related book as available again
+      try {
+        if (currentRequest.id_buku) {
+          await db.update(tblBuku).set({
+            tersedia: 1 // mark as available
+          }).where(eq(tblBuku.id_buku, currentRequest.id_buku));
+        }
+      } catch (buchErr) {
+        console.error('Error updating book availability on return:', buchErr);
+      }
+
+      // Log the return action
+      await this.logLoanAction(id, 'returned', adminId, 'Marked as returned by admin', 'approved', 'returned');
+
+      // Clear dashboard stats cache
+      cache.delete('dashboard_stats');
+
+      return true;
+    } catch (error) {
+      console.error('Error marking loan as returned:', error);
+      return false;
+    }
+  }
+
+  async getLoanRequestStats(): Promise<{ pending: number; active: number; completed: number; overdue: number }> {
+    try {
+      const [pendingResult, activeResult, completedResult, overdueResult] = await Promise.all([
+        db.select({ count: count() }).from(tblLoanRequests).where(eq(tblLoanRequests.status, 'pending')),
+        db.select({ count: count() }).from(tblLoanRequests).where(eq(tblLoanRequests.status, 'approved')),
+        db.select({ count: count() }).from(tblLoanRequests).where(eq(tblLoanRequests.status, 'returned')),
+        db.select({ count: count() }).from(tblLoanRequests).where(eq(tblLoanRequests.status, 'overdue'))
+      ]);
+
+      return {
+        pending: pendingResult[0]?.count || 0,
+        active: activeResult[0]?.count || 0,
+        completed: completedResult[0]?.count || 0,
+        overdue: overdueResult[0]?.count || 0
+      };
+    } catch (error) {
+      console.error('Error fetching loan request stats:', error);
+      return { pending: 0, active: 0, completed: 0, overdue: 0 };
+    }
+  }
+
+  async getUserLoanRequestStats(userId: number): Promise<{ pending: number; approved: number; returned: number }> {
+    try {
+      // First get the user's NIK from the login table
+      const user = await db.select().from(tblLogin).where(eq(tblLogin.id_login, userId)).limit(1);
+      if (!user[0] || !user[0].anggota_id) {
+        return { pending: 0, approved: 0, returned: 0 };
+      }
+      
+      return this.getUserLoanRequestStatsByNik(user[0].anggota_id);
+    } catch (error) {
+      console.error('Error fetching user loan request stats:', error);
+      return { pending: 0, approved: 0, returned: 0 };
+    }
+  }
+
+  async getUserLoanRequestStatsByNik(employeeNik: string): Promise<{ pending: number; approved: number; returned: number }> {
+    try {
+      const [pendingResult, approvedResult, returnedResult] = await Promise.all([
+        db.select({ count: count() }).from(tblLoanRequests).where(and(
+          eq(tblLoanRequests.employee_nik, employeeNik),
+          eq(tblLoanRequests.status, 'pending')
+        )),
+        db.select({ count: count() }).from(tblLoanRequests).where(and(
+          eq(tblLoanRequests.employee_nik, employeeNik),
+          eq(tblLoanRequests.status, 'approved')
+        )),
+        db.select({ count: count() }).from(tblLoanRequests).where(and(
+          eq(tblLoanRequests.employee_nik, employeeNik),
+          eq(tblLoanRequests.status, 'returned')
+        ))
+      ]);
+
+      return {
+        pending: pendingResult[0]?.count || 0,
+        approved: approvedResult[0]?.count || 0,
+        returned: returnedResult[0]?.count || 0
+      };
+    } catch (error) {
+      console.error('Error fetching user loan request stats by NIK:', error);
+      return { pending: 0, approved: 0, returned: 0 };
+    }
+  }
+
+  // ===== STAFF MANAGEMENT METHODS =====
+
+  async getStaff(page: number = 1, limit: number = 25, search?: string): Promise<{ staff: Staff[]; total: number }> {
+    try {
+      const offset = (page - 1) * limit;
+      
+      if (search) {
+        const searchCondition = or(
+          like(tblStaff.staff_name, `%${search}%`),
+          like(tblStaff.nik, `%${search}%`),
+          like(tblStaff.email, `%${search}%`),
+          like(tblStaff.department_name, `%${search}%`),
+          like(tblStaff.dept_name, `%${search}%`)
+        );
+
+        const [staff, totalResult] = await Promise.all([
+          db.select().from(tblStaff).where(searchCondition).orderBy(asc(tblStaff.staff_name)).offset(offset).limit(limit),
+          db.select({ count: count() }).from(tblStaff).where(searchCondition)
+        ]);
+
+        return {
+          staff,
+          total: totalResult[0]?.count || 0
+        };
+      } else {
+        const [staff, totalResult] = await Promise.all([
+          db.select().from(tblStaff).orderBy(asc(tblStaff.staff_name)).offset(offset).limit(limit),
+          db.select({ count: count() }).from(tblStaff)
+        ]);
+
+        return {
+          staff,
+          total: totalResult[0]?.count || 0
+        };
+      }
+    } catch (error) {
+      console.error('Error fetching staff:', error);
+      return { staff: [], total: 0 };
+    }
+  }
+
+  async getStaffById(id: number): Promise<Staff | null> {
+    try {
+      const result = await db
+        .select()
+        .from(tblStaff)
+        .where(eq(tblStaff.id_staff, id))
+        .limit(1);
+      
+      return result[0] || null;
+    } catch (error) {
+      console.error('Error fetching staff by ID:', error);
+      return null;
+    }
+  }
+
+  async getStaffByNik(nik: string): Promise<Staff | null> {
+    try {
+      const result = await db
+        .select()
+        .from(tblStaff)
+        .where(eq(tblStaff.nik, nik))
+        .limit(1);
+      
+      return result[0] || null;
+    } catch (error) {
+      console.error('Error fetching staff by NIK:', error);
+      return null;
+    }
+  }
+
+  async createStaff(staffData: InsertStaff): Promise<Staff> {
+    try {
+      const result = await db.insert(tblStaff).values(staffData);
+      const insertedId = result[0].insertId;
+      
+      const newStaff = await this.getStaffById(Number(insertedId));
+      if (!newStaff) {
+        throw new Error('Failed to retrieve created staff');
+      }
+      
+      return newStaff;
+    } catch (error) {
+      console.error('Error creating staff:', error);
+      throw error;
+    }
+  }
+
+  async updateStaff(id: number, updates: Partial<InsertStaff>): Promise<Staff | null> {
+    try {
+      await db.update(tblStaff)
+        .set({
+          ...updates,
+          updated_at: new Date()
+        })
+        .where(eq(tblStaff.id_staff, id));
+      
+      return await this.getStaffById(id);
+    } catch (error) {
+      console.error('Error updating staff:', error);
+      return null;
+    }
+  }
+
+  async deleteStaff(id: number): Promise<boolean> {
+    try {
+      const result = await db.delete(tblStaff).where(eq(tblStaff.id_staff, id));
+      return (result[0]?.affectedRows || 0) > 0;
+    } catch (error) {
+      console.error('Error deleting staff:', error);
+      return false;
+    }
+  }
+
+  async bulkCreateStaff(staffList: InsertStaff[]): Promise<{ success: number; errors: string[] }> {
+    const errors: string[] = [];
+    let success = 0;
+
+    for (const staffData of staffList) {
+      try {
+        // Check if NIK already exists
+        const existing = await this.getStaffByNik(staffData.nik);
+        if (existing) {
+          errors.push(`Staff with NIK ${staffData.nik} already exists`);
+          continue;
+        }
+
+        await this.createStaff(staffData);
+        success++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        errors.push(`Failed to create staff ${staffData.staff_name}: ${errorMessage}`);
+      }
+    }
+
+    return { success, errors };
+  }
+
+  async getStaffDepartments(): Promise<string[]> {
+    try {
+      const result = await db
+        .selectDistinct({ dept_name: tblStaff.dept_name })
+        .from(tblStaff)
+        .where(isNotNull(tblStaff.dept_name))
+        .orderBy(asc(tblStaff.dept_name));
+      
+      return result.map(r => r.dept_name).filter(Boolean) as string[];
+    } catch (error) {
+      console.error('Error fetching staff departments:', error);
+      return [];
+    }
+  }
+
+  async getStaffSections(): Promise<string[]> {
+    try {
+      const result = await db
+        .selectDistinct({ section_name: tblStaff.section_name })
+        .from(tblStaff)
+        .where(isNotNull(tblStaff.section_name))
+        .orderBy(asc(tblStaff.section_name));
+      
+      return result.map(r => r.section_name).filter(Boolean) as string[];
+    } catch (error) {
+      console.error('Error fetching staff sections:', error);
+      return [];
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();
+
+// Export cache for testing purposes
+export { cache };

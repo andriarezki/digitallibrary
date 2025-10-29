@@ -349,10 +349,10 @@ export default function BooksPage() {
     setEditDialogOpen(true);
   };
 
-  const handleEditFormChange = (field: string, value: string | number) => {
+  const handleEditFormChange = (field: string, value: string | number | undefined) => {
     setEditForm(prev => ({
       ...prev,
-      [field]: value
+      [field]: value === undefined ? "" : value
     }));
   };
 

@@ -19,6 +19,7 @@ const LocationsPage = lazy(() => import("@/pages/locations"));
 const LoansPage = lazy(() => import("@/pages/loans"));
 const LoanRequestPage = lazy(() => import("@/pages/loan-request"));
 const UsersPage = lazy(() => import("@/pages/users"));
+const StaffPage = lazy(() => import("@/pages/staff"));
 const ReportsPage = lazy(() => import("@/pages/reports"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 const AboutPage = lazy(() => import("@/pages/about"));
@@ -85,6 +86,7 @@ function AppContent() {
             <Route path="/loans" component={LoansPage} />
             <Route path="/loan-request" component={LoanRequestPage} />
             <Route path="/users" component={UsersPage} />
+            <Route path="/staff" component={StaffPage} />
             <Route path="/reports" component={ReportsPage} />
             <Route path="/about" component={AboutPage} />
             <Route component={NotFound} />

@@ -7,24 +7,26 @@ import {
   tblBuku,
   tblKategori,
   tblLokasi,
-  tblUser,
+  tblLoanRequests,
+  tblLogin,
   type BukuWithDetails,
   type Kategori,
   type Lokasi,
-  type User,
+  type Login,
 } from "@shared/schema";
 
 // Check if a column exists in a table
 async function columnExists(tableName: string, columnName: string): Promise<boolean> {
   try {
-    const result = await db.execute(sql`
+    const rawResult = await db.execute(sql`
       SELECT COUNT(*) as count 
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = DATABASE() 
       AND TABLE_NAME = ${tableName} 
       AND COLUMN_NAME = ${columnName}
     `);
-    return result[0]?.count > 0;
+    const result = rawResult as unknown as Array<{ count: number } & Record<string, unknown>>;
+    return Number(result[0]?.count ?? 0) > 0;
   } catch (error) {
     console.log(`Error checking column ${columnName} in ${tableName}:`, error);
     return false;
@@ -60,6 +62,13 @@ export class ServerCompatibleStorage {
 
     try {
       // Build select object based on available columns
+      const availabilityExpression = sql<number>`CASE 
+        WHEN ${tblBuku.tersedia} = 1 AND NOT EXISTS (
+          SELECT 1 FROM ${tblLoanRequests}
+          WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
+            AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
+        ) THEN 1 ELSE 0 END`;
+
       const selectFields: any = {
         id_buku: tblBuku.id_buku,
         buku_id: tblBuku.buku_id,
@@ -75,7 +84,7 @@ export class ServerCompatibleStorage {
         isi: tblBuku.isi,
         jml: tblBuku.jml,
         tgl_masuk: tblBuku.tgl_masuk,
-        tersedia: tblBuku.tersedia,
+        tersedia: availabilityExpression,
         kategori_nama: tblKategori.nama_kategori,
         lokasi_nama: tblLokasi.nama_lokasi,
       };
@@ -120,13 +129,12 @@ export class ServerCompatibleStorage {
         conditions.push(eq(tblBuku.thn_buku, yearFilter));
       }
 
-      let finalQuery = booksQuery;
-      if (conditions.length > 0) {
-        finalQuery = booksQuery.where(and(...conditions));
-      }
+      const conditionedQuery = conditions.length > 0
+        ? booksQuery.where(and(...conditions))
+        : booksQuery;
 
       const offset = (page - 1) * limit;
-      const books = await finalQuery.limit(limit).offset(offset);
+      const books = await conditionedQuery.limit(limit).offset(offset);
 
       console.log(`Successfully fetched ${books.length} books`);
       return books;
@@ -142,6 +150,13 @@ export class ServerCompatibleStorage {
 
     try {
       // Build select object based on available columns
+      const availabilityExpression = sql<number>`CASE 
+        WHEN ${tblBuku.tersedia} = 1 AND NOT EXISTS (
+          SELECT 1 FROM ${tblLoanRequests}
+          WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
+            AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
+        ) THEN 1 ELSE 0 END`;
+
       const selectFields: any = {
         id_buku: tblBuku.id_buku,
         buku_id: tblBuku.buku_id,
@@ -157,7 +172,7 @@ export class ServerCompatibleStorage {
         isi: tblBuku.isi,
         jml: tblBuku.jml,
         tgl_masuk: tblBuku.tgl_masuk,
-        tersedia: tblBuku.tersedia,
+        tersedia: availabilityExpression,
         kategori_nama: tblKategori.nama_kategori,
         lokasi_nama: tblLokasi.nama_lokasi,
       };
@@ -178,7 +193,8 @@ export class ServerCompatibleStorage {
         .where(eq(tblBuku.id_buku, id))
         .limit(1);
 
-      return results[0];
+  const normalizedResults = results as unknown as Array<BukuWithDetails & Record<string, unknown>>;
+  return normalizedResults[0];
     } catch (error) {
       console.error("Error fetching book by ID:", error);
       throw new Error("Failed to fetch book");
@@ -202,7 +218,7 @@ export class ServerCompatibleStorage {
     }
   }
 
-  async getUsers(): Promise<User[]> {
-    return await db.select().from(tblUser);
+  async getUsers(): Promise<Login[]> {
+    return await db.select().from(tblLogin);
   }
 }

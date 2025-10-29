@@ -175,6 +175,24 @@ export const tblEmployees = mysqlTable("tbl_employees", {
   updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
 });
 
+// Staff master data table (comprehensive table from CSV data)
+export const tblStaff = mysqlTable("tbl_staff", {
+  id_staff: int("id_staff").primaryKey().autoincrement(),
+  staff_name: varchar("staff_name", { length: 255 }).notNull(),
+  initial_name: varchar("initial_name", { length: 100 }),
+  nik: varchar("nik", { length: 20 }).notNull().unique(),
+  section_name: varchar("section_name", { length: 255 }),
+  department_name: varchar("department_name", { length: 255 }),
+  dept_name: varchar("dept_name", { length: 50 }), // Short department code
+  no_hp: varchar("no_hp", { length: 20 }),
+  email: varchar("email", { length: 255 }),
+  status: int("status").default(1), // 1 = active, 0 = inactive
+  position: varchar("position", { length: 255 }),
+  photo: varchar("photo", { length: 255 }),
+  created_at: timestamp("created_at").defaultNow().notNull(),
+  updated_at: timestamp("updated_at").defaultNow().onUpdateNow().notNull(),
+});
+
 // Loan requests table
 export const tblLoanRequests = mysqlTable("tbl_loan_requests", {
   id: int("id").primaryKey().autoincrement(),
@@ -230,6 +248,9 @@ export const tblLoanHistory = mysqlTable("tbl_loan_history", {
 export type Employee = typeof tblEmployees.$inferSelect;
 export type InsertEmployee = typeof tblEmployees.$inferInsert;
 
+export type Staff = typeof tblStaff.$inferSelect;
+export type InsertStaff = typeof tblStaff.$inferInsert;
+
 export type LoanRequest = typeof tblLoanRequests.$inferSelect;
 export type InsertLoanRequest = typeof tblLoanRequests.$inferInsert;
 
@@ -251,3 +272,19 @@ export type BukuWithDetails = Buku & {
   department?: string | null;
   file_type?: string | null;
 };
+
+export const insertStaffSchema = createInsertSchema(tblStaff).pick({
+  staff_name: true,
+  initial_name: true,
+  nik: true,
+  section_name: true,
+  department_name: true,
+  dept_name: true,
+  no_hp: true,
+  email: true,
+  status: true,
+  position: true,
+  photo: true,
+});
+
+export type InsertStaffData = z.infer<typeof insertStaffSchema>;

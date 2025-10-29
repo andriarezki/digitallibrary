@@ -79,14 +79,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const trackPdfView = async (req: express.Request, res: express.Response, next: express.NextFunction) => {
     try {
       const filename = req.params.filename || path.basename(req.path);
+      console.log(`PDF View Tracking - Filename: ${filename}`);
       
       // Extract book ID from filename (assuming format like "book_123.pdf" or just "123.pdf")
       const bookIdMatch = filename.match(/(?:book_)?(\d+)\.pdf$/i);
+      console.log(`PDF View Tracking - Book ID Match: ${bookIdMatch ? bookIdMatch[1] : 'No match'}`);
+      
       if (bookIdMatch) {
         const bookId = parseInt(bookIdMatch[1]);
         
         // Get book details to find category
         const book = await storage.getBookById(bookId);
+        console.log(`PDF View Tracking - Book found: ${book ? `ID: ${book.id_buku}, Category ID: ${book.id_kategori}, Category: ${book.kategori_nama}` : 'Not found'}`);
+        
         if (book && book.id_kategori) {
           // Record the view in database
           await recordPdfView(
@@ -96,6 +101,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
             req.headers['user-agent'],
             req.session.userId
           );
+          console.log(`PDF View Tracking - Recorded view for Book ID: ${bookId}, Category ID: ${book.id_kategori}, Category: ${book.kategori_nama}`);
+        }
+      } else {
+        // If pattern doesn't match, try to find book by PDF filename
+        console.log(`PDF View Tracking - Trying to find book by filename: ${filename}`);
+        try {
+          const bookByFilename = await storage.getBookByPdfFilename(filename);
+          if (bookByFilename && bookByFilename.id_kategori) {
+            await recordPdfView(
+              bookByFilename.id_buku,
+              bookByFilename.id_kategori,
+              getClientIP(req),
+              req.headers['user-agent'],
+              req.session.userId
+            );
+            console.log(`PDF View Tracking - Recorded view by filename for Book ID: ${bookByFilename.id_buku}, Category ID: ${bookByFilename.id_kategori}, Category: ${bookByFilename.kategori_nama}`);
+          }
+        } catch (error) {
+          console.log('PDF View Tracking - Book not found by filename');
         }
       }
       
@@ -209,6 +233,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Temporary endpoint to clear dashboard cache (for testing)
+  app.post("/api/dashboard/clear-cache", requireAuth, async (req, res) => {
+    try {
+      // Import cache from storage module
+      const { cache } = await import('./storage');
+      cache.delete('dashboard_stats');
+      res.json({ message: "Dashboard cache cleared" });
+    } catch (error) {
+      res.status(500).json({ message: "Failed to clear cache" });
+    }
+  });
+
   // Top categories for chart
   app.get("/api/dashboard/top-categories", requireAuth, async (req, res) => {
     try {
@@ -259,6 +295,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Debug endpoint for PDF tracking
+  app.get("/api/debug/pdf-tracking", requireAuth, async (req, res) => {
+    try {
+      const debugData = await storage.getPdfTrackingDebugData();
+      res.json(debugData);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch PDF tracking debug data" });
+    }
+  });
+
   // New endpoint for database-based visitor stats
   app.get("/api/dashboard/database-stats", requireAuth, async (req, res) => {
     try {
@@ -284,9 +330,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Books routes
   app.get("/api/books", requireAuth, async (req, res) => {
     try {
+      const availableOnly = req.query.available === 'true';
+      const search = req.query.search as string | undefined;
+      const limitParam = parseInt(req.query.limit as string);
+      const limitForAvailable = !Number.isNaN(limitParam)
+        ? Math.max(1, Math.min(limitParam, 50))
+        : 20;
+
+      if (availableOnly) {
+        const { books, total } = await storage.getAvailableBooks(search, limitForAvailable);
+        return res.json({ books, total });
+      }
+
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 25;
-      const search = req.query.search as string;
       const categoryId = req.query.categoryId ? parseInt(req.query.categoryId as string) : undefined;
       const lokasiId = req.query.lokasiId ? parseInt(req.query.lokasiId as string) : undefined;
       const departmentFilter = req.query.departmentFilter as string;
@@ -699,10 +756,271 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ===== STAFF MANAGEMENT ROUTES =====
+  
+  // Staff routes
+  app.get("/api/staff", requireAuth, async (req, res) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = parseInt(req.query.limit as string) || 25;
+      const search = req.query.search as string;
+
+      const result = await storage.getStaff(page, limit, search);
+      res.json(result);
+    } catch (error) {
+      console.error("Error fetching staff:", error);
+      res.status(500).json({ message: "Failed to fetch staff" });
+    }
+  });
+
+  app.get("/api/staff/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const staff = await storage.getStaffById(id);
+      
+      if (!staff) {
+        return res.status(404).json({ message: "Staff not found" });
+      }
+      
+      res.json(staff);
+    } catch (error) {
+      console.error("Error fetching staff:", error);
+      res.status(500).json({ message: "Failed to fetch staff" });
+    }
+  });
+
+  app.get("/api/staff/nik/:nik", requireAuth, async (req, res) => {
+    try {
+      const { nik } = req.params;
+      const staff = await storage.getStaffByNik(nik);
+      
+      if (!staff) {
+        return res.status(404).json({ message: "Staff not found" });
+      }
+      
+      res.json(staff);
+    } catch (error) {
+      console.error("Error fetching staff by NIK:", error);
+      res.status(500).json({ message: "Failed to fetch staff" });
+    }
+  });
+
+  app.post("/api/staff", requireAuth, async (req, res) => {
+    try {
+      const staff = await storage.createStaff(req.body);
+      res.status(201).json(staff);
+    } catch (error) {
+      console.error("Error creating staff:", error);
+      res.status(500).json({ message: "Failed to create staff" });
+    }
+  });
+
+  app.put("/api/staff/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const staff = await storage.updateStaff(id, req.body);
+      
+      if (!staff) {
+        return res.status(404).json({ message: "Staff not found" });
+      }
+      
+      res.json(staff);
+    } catch (error) {
+      console.error("Error updating staff:", error);
+      res.status(500).json({ message: "Failed to update staff" });
+    }
+  });
+
+  app.delete("/api/staff/:id", requireAuth, async (req, res) => {
+    try {
+      const id = parseInt(req.params.id);
+      const success = await storage.deleteStaff(id);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Staff not found" });
+      }
+      
+      res.json({ message: "Staff deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting staff:", error);
+      res.status(500).json({ message: "Failed to delete staff" });
+    }
+  });
+
+  // Bulk import staff from CSV data
+  app.post("/api/staff/bulk-import", requireAuth, async (req, res) => {
+    try {
+      const { staffList } = req.body;
+      
+      if (!Array.isArray(staffList) || staffList.length === 0) {
+        return res.status(400).json({ message: "Invalid staff data provided" });
+      }
+
+      const result = await storage.bulkCreateStaff(staffList);
+      res.json({
+        message: `Import completed: ${result.success} successful, ${result.errors.length} failed`,
+        success: result.success,
+        errors: result.errors
+      });
+    } catch (error) {
+      console.error("Error bulk importing staff:", error);
+      res.status(500).json({ message: "Failed to import staff data" });
+    }
+  });
+
+  // Get staff departments
+  app.get("/api/staff/meta/departments", requireAuth, async (req, res) => {
+    try {
+      const departments = await storage.getStaffDepartments();
+      res.json(departments);
+    } catch (error) {
+      console.error("Error fetching staff departments:", error);
+      res.status(500).json({ message: "Failed to fetch departments" });
+    }
+  });
+
+  // Get staff sections
+  app.get("/api/staff/meta/sections", requireAuth, async (req, res) => {
+    try {
+      const sections = await storage.getStaffSections();
+      res.json(sections);
+    } catch (error) {
+      console.error("Error fetching staff sections:", error);
+      res.status(500).json({ message: "Failed to fetch sections" });
+    }
+  });
+
+  // Test endpoint to get sample NIKs (temporary for testing)
+  app.get("/api/test/sample-niks", async (req, res) => {
+    try {
+      const staff = await storage.getStaff(1, 5);
+      const sampleNiks = staff.staff.map((s: any) => ({ nik: s.nik, name: s.staff_name }));
+      res.json(sampleNiks);
+    } catch (error) {
+      console.error("Error fetching sample NIKs:", error);
+      res.status(500).json({ message: "Failed to fetch sample NIKs" });
+    }
+  });
+
+  // Debug endpoint to check loan requests in database
+  app.get("/api/debug/loan-requests", async (req, res) => {
+    try {
+      // Get raw loan requests without filters
+      const result = await storage.getLoanRequests();
+      console.log("Debug: Found loan requests:", result);
+      res.json({
+        message: "Debug loan requests data",
+        count: result.total,
+        requests: result.requests
+      });
+    } catch (error) {
+      console.error("Error in debug loan requests:", error);
+      const message = error instanceof Error ? error.message : "Unknown error";
+      res.status(500).json({ message: "Debug failed", error: message });
+    }
+  });
+
+  // Test loan requests endpoint without auth (temporary)
+  app.get("/api/test/loan-requests", async (req, res) => {
+    try {
+      const { status, employeeNik, page = "1", limit = "25" } = req.query;
+      
+      const filters = {
+        status: status as string,
+        employeeNik: employeeNik as string,
+        page: parseInt(page as string),
+        limit: parseInt(limit as string),
+      };
+      
+      const result = await storage.getLoanRequests(filters);
+      console.log("Test endpoint result:", result);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error fetching loan requests:", error);
+      res.status(500).json({ message: "Failed to fetch loan requests", error: error.message });
+    }
+  });
+
+  // Utility endpoint to sync all staff data to employees table
+  app.post("/api/admin/sync-staff-to-employees", requireAuth, async (req, res) => {
+    try {
+      const allStaff = await storage.getStaff(1, 1000);
+      let synced = 0;
+      let errors = 0;
+      
+      for (const staff of allStaff.staff) {
+        try {
+          // Check if employee already exists
+          const existingEmployee = await storage.getEmployeeByNik(staff.nik);
+          
+          if (!existingEmployee) {
+            // Create employee record from staff data
+            const employeeData = {
+              nik: staff.nik,
+              name: staff.staff_name,
+              email: staff.email || '',
+              phone: staff.no_hp || '',
+              department: staff.department_name || staff.dept_name || '',
+              position: staff.position || '',
+              status: (staff.status === 1 ? 'active' : 'inactive') as 'active' | 'inactive'
+            };
+            
+            await storage.createEmployee(employeeData);
+            synced++;
+          }
+        } catch (error) {
+          console.error(`Error syncing staff ${staff.nik}:`, error);
+          errors++;
+        }
+      }
+      
+      res.json({ 
+        message: "Staff sync completed", 
+        synced, 
+        errors, 
+        total: allStaff.staff.length 
+      });
+    } catch (error) {
+      console.error("Error syncing staff to employees:", error);
+      res.status(500).json({ message: "Failed to sync staff data" });
+    }
+  });
+
+  // Temporary endpoint to add missing employee data
+  app.post("/api/employees", async (req, res) => {
+    try {
+      const employee = await storage.createEmployee(req.body);
+      res.status(201).json(employee);
+    } catch (error) {
+      console.error("Error creating employee:", error);
+      res.status(500).json({ message: "Failed to create employee" });
+    }
+  });
+
   app.get("/api/employees/:nik", async (req, res) => {
     try {
       const { nik } = req.params;
-      const employee = await storage.getEmployeeByNik(nik);
+      let employee = await storage.getEmployeeByNik(nik);
+      
+      // If not found in employees table, try staff table
+      if (!employee) {
+        const staff = await storage.getStaffByNik(nik);
+        if (staff) {
+          // Convert staff data to employee format
+          employee = {
+            id: staff.id_staff,
+            nik: staff.nik,
+            name: staff.staff_name,
+            email: staff.email || '',
+            phone: staff.no_hp || '',
+            department: staff.department_name || staff.dept_name || '',
+            position: staff.position || '',
+            status: staff.status === 1 ? 'active' : 'inactive',
+            created_at: staff.created_at,
+            updated_at: staff.updated_at
+          };
+        }
+      }
       
       if (!employee) {
         return res.status(404).json({ message: "Employee not found" });
@@ -718,6 +1036,43 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Loan request routes
   app.post("/api/loan-requests", async (req, res) => {
     try {
+      const { employee_nik } = req.body;
+      
+      // Check if employee exists in employees table
+      let employee = await storage.getEmployeeByNik(employee_nik);
+      
+      // If not found in employees table, try to get from staff table and sync
+      if (!employee) {
+        const staff = await storage.getStaffByNik(employee_nik);
+        if (staff) {
+          // Create employee record from staff data
+          const employeeData = {
+            nik: staff.nik,
+            name: staff.staff_name,
+            email: staff.email || '',
+            phone: staff.no_hp || '',
+            department: staff.department_name || staff.dept_name || '',
+            position: staff.position || '',
+            status: (staff.status === 1 ? 'active' : 'inactive') as 'active' | 'inactive'
+          };
+          
+          try {
+            employee = await storage.createEmployee(employeeData);
+            console.log(`Created employee record for NIK: ${employee_nik}`);
+          } catch (createError) {
+            console.error('Error creating employee record:', createError);
+            return res.status(400).json({ 
+              message: `Employee with NIK ${employee_nik} not found and could not be created` 
+            });
+          }
+        } else {
+          return res.status(400).json({ 
+            message: `Employee with NIK ${employee_nik} not found in staff or employee records` 
+          });
+        }
+      }
+      
+      // Now create the loan request
       const loanRequest = await storage.createLoanRequest(req.body);
       res.status(201).json(loanRequest);
     } catch (error) {
@@ -745,10 +1100,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Get loan request statistics (must be BEFORE the :id route)
+  app.get("/api/loan-requests/stats", requireAuth, async (req, res) => {
+    try {
+      const user = req.session.user;
+      const isAdminOrPetugas = user?.level === 'admin' || user?.level === 'petugas';
+      
+      if (isAdminOrPetugas) {
+        // Return global statistics for admins
+        const stats = await storage.getLoanRequestStats();
+        res.json(stats);
+      } else {
+        // Return user-specific statistics for regular users
+        const stats = await storage.getUserLoanRequestStats(user?.id || 0);
+        res.json(stats);
+      }
+    } catch (error) {
+      console.error("Error fetching loan request stats:", error);
+      res.status(500).json({ message: "Failed to fetch statistics" });
+    }
+  });
+
   app.get("/api/loan-requests/:id", async (req, res) => {
     try {
       const { id } = req.params;
-      const loanRequest = await storage.getLoanRequestById(parseInt(id));
+      const requestId = parseInt(id);
+      
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
+      
+      const loanRequest = await storage.getLoanRequestById(requestId);
       
       if (!loanRequest) {
         return res.status(404).json({ message: "Loan request not found" });
@@ -766,7 +1148,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { notes } = req.body;
-      const adminId = req.user!.id_login;
+      const adminId = req.session.user?.id;
       
       const success = await storage.approveLoanRequest(parseInt(id), adminId, notes);
       
@@ -785,9 +1167,83 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const { notes } = req.body;
-      const adminId = req.user!.id_login;
+      const adminId = req.session.user?.id;
       
       const success = await storage.rejectLoanRequest(parseInt(id), adminId, notes);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      
+      res.json({ message: "Loan request rejected successfully" });
+    } catch (error) {
+      console.error("Error rejecting loan request:", error);
+      res.status(500).json({ message: "Failed to reject loan request" });
+    }
+  });
+
+  // Mark loan as returned
+  app.patch("/api/loan-requests/:id/return", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const adminId = req.session.user?.id;
+      
+      const requestId = parseInt(id);
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
+      
+      const success = await storage.returnLoanRequest(requestId, adminId);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or not approved" });
+      }
+      
+      res.json({ message: "Book marked as returned successfully" });
+    } catch (error) {
+      console.error("Error marking book as returned:", error);
+      res.status(500).json({ message: "Failed to mark book as returned" });
+    }
+  });
+
+  // Update approve endpoint to use PATCH
+  app.patch("/api/loan-requests/:id/approve", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.session.user?.id;
+      
+      const requestId = parseInt(id);
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
+      
+      const success = await storage.approveLoanRequest(requestId, adminId, notes);
+      
+      if (!success) {
+        return res.status(404).json({ message: "Loan request not found or already processed" });
+      }
+      
+      res.json({ message: "Loan request approved successfully" });
+    } catch (error) {
+      console.error("Error approving loan request:", error);
+      res.status(500).json({ message: "Failed to approve loan request" });
+    }
+  });
+
+  // Update reject endpoint to use PATCH
+  app.patch("/api/loan-requests/:id/reject", requireAuth, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { notes } = req.body;
+      const adminId = req.session.user?.id;
+      
+      const requestId = parseInt(id);
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
+      
+      const success = await storage.rejectLoanRequest(requestId, adminId, notes);
       
       if (!success) {
         return res.status(404).json({ message: "Loan request not found or already processed" });

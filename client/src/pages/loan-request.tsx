@@ -12,6 +12,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { format } from 'date-fns';
 import { CalendarIcon, BookOpen, User, Mail, Phone, Building, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useCenteredNotification } from '@/components/ui/centered-notification';
 
 interface Employee {
   id: number;
@@ -32,6 +33,8 @@ interface Book {
   tersedia: number;
 }
 
+const BOOK_SUGGESTION_LIMIT = 20;
+
 interface LoanRequestForm {
   id_buku: number;
   employee_nik: string;
@@ -44,14 +47,17 @@ interface LoanRequestForm {
 
 export default function LoanRequestPage() {
   const [, setLocation] = useLocation();
+  const { showNotification, NotificationComponent } = useCenteredNotification();
   const [books, setBooks] = useState<Book[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [booksTotal, setBooksTotal] = useState(0);
+  const [loadingBooks, setLoadingBooks] = useState(false);
   const [selectedBook, setSelectedBook] = useState<Book | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [success, setSuccess] = useState('');
   const [searchBook, setSearchBook] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [form, setForm] = useState<LoanRequestForm>({
     id_buku: 0,
     employee_nik: '',
@@ -62,28 +68,77 @@ export default function LoanRequestPage() {
     reason: ''
   });
 
+  // Debounce search term to avoid spamming the API
+  useEffect(() => {
+    const handle = setTimeout(() => {
+      setDebouncedSearch(searchBook.trim());
+    }, 300);
+
+    return () => clearTimeout(handle);
+  }, [searchBook]);
+
   // Fetch available books
   useEffect(() => {
+    const controller = new AbortController();
+
     const fetchBooks = async () => {
       try {
-        const response = await fetch('/api/books?available=true');
+        setLoadingBooks(true);
+  const params = new URLSearchParams({ available: 'true', limit: BOOK_SUGGESTION_LIMIT.toString() });
+        if (debouncedSearch) {
+          params.set('search', debouncedSearch);
+        }
+
+        const response = await fetch(`/api/books?${params.toString()}`, {
+          signal: controller.signal,
+        });
+
         if (response.ok) {
           const data = await response.json();
-          setBooks(data.books.filter((book: Book) => book.tersedia > 0));
+          setBooks(data.books || []);
+          setBooksTotal(data.total ?? (data.books ? data.books.length : 0));
         }
       } catch (err) {
-        console.error('Error fetching books:', err);
+        if ((err as any)?.name !== 'AbortError') {
+          console.error('Error fetching books:', err);
+        }
+      } finally {
+        setLoadingBooks(false);
       }
     };
 
     fetchBooks();
-  }, []);
 
-  // Fetch employees
+    return () => {
+      controller.abort();
+    };
+  }, [debouncedSearch]);
+
+  // Fetch employees/staff
   useEffect(() => {
     const fetchEmployees = async () => {
       try {
-        const response = await fetch('/api/employees');
+        // Try staff endpoint first (newer implementation)
+        let response = await fetch('/api/staff');
+        if (response.ok) {
+          const data = await response.json();
+          const staffList = data.staff || data;
+          // Convert staff data to employee format
+          const employeeData = staffList.map((staff: any) => ({
+            id: staff.id_staff || staff.id,
+            nik: staff.nik,
+            name: staff.staff_name || staff.name,
+            email: staff.email,
+            phone: staff.phone,
+            department: staff.department,
+            position: staff.position || staff.job_title
+          }));
+          setEmployees(employeeData);
+          return;
+        }
+        
+        // Fallback to employees endpoint
+        response = await fetch('/api/employees');
         if (response.ok) {
           const data = await response.json();
           setEmployees(data);
@@ -96,12 +151,19 @@ export default function LoanRequestPage() {
     fetchEmployees();
   }, []);
 
-  // Handle NIK input - auto-fill employee data
+  // Handle NIK input - auto-fill employee data with enhanced search
   const handleNikChange = async (nik: string) => {
     setForm(prev => ({ ...prev, employee_nik: nik }));
     
     if (nik.length >= 3) {
-      const employee = employees.find(emp => emp.nik === nik);
+      // First, try exact match from cached employees
+      let employee = employees.find(emp => emp.nik === nik);
+      
+      // If no exact match, try partial match
+      if (!employee && nik.length >= 4) {
+        employee = employees.find(emp => emp.nik.includes(nik));
+      }
+      
       if (employee) {
         setSelectedEmployee(employee);
         setForm(prev => ({
@@ -110,16 +172,62 @@ export default function LoanRequestPage() {
           borrower_email: employee.email || '',
           borrower_phone: employee.phone || ''
         }));
+        setError(''); // Clear any previous errors
       } else {
         setSelectedEmployee(null);
-        // Keep the NIK but clear other fields if no match
-        setForm(prev => ({
-          ...prev,
-          borrower_name: '',
-          borrower_email: '',
-          borrower_phone: ''
-        }));
+        // If no match found, try to fetch from server with employee endpoint (public)
+        if (nik.length >= 6) {
+          try {
+            // Use the public employee search endpoint which also searches staff table
+            const response = await fetch(`/api/employees/${nik}`);
+            
+            if (response.ok) {
+              const employeeData = await response.json();
+              
+              setSelectedEmployee(employeeData);
+              setForm(prev => ({
+                ...prev,
+                borrower_name: employeeData.name,
+                borrower_email: employeeData.email || '',
+                borrower_phone: employeeData.phone || ''
+              }));
+              setError('');
+            } else {
+              // Keep the NIK but clear other fields if no match
+              setForm(prev => ({
+                ...prev,
+                borrower_name: '',
+                borrower_email: '',
+                borrower_phone: ''
+              }));
+            }
+          } catch (err) {
+            console.error('Error fetching employee by NIK:', err);
+            setForm(prev => ({
+              ...prev,
+              borrower_name: '',
+              borrower_email: '',
+              borrower_phone: ''
+            }));
+          }
+        } else {
+          // Clear other fields if NIK is too short
+          setForm(prev => ({
+            ...prev,
+            borrower_name: '',
+            borrower_email: '',
+            borrower_phone: ''
+          }));
+        }
       }
+    } else {
+      setSelectedEmployee(null);
+      setForm(prev => ({
+        ...prev,
+        borrower_name: '',
+        borrower_email: '',
+        borrower_phone: ''
+      }));
     }
   };
 
@@ -137,7 +245,6 @@ export default function LoanRequestPage() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setSuccess('');
 
     try {
       // Validation
@@ -167,7 +274,14 @@ export default function LoanRequestPage() {
       }
 
       const result = await response.json();
-      setSuccess(`Loan request submitted successfully! Request ID: ${result.request_id}`);
+      
+      // Show centered success notification
+      showNotification({
+        title: "Loan Request Submitted!",
+        description: `Your loan request has been submitted successfully. Request ID: ${result.request_id}`,
+        type: "success",
+        duration: 5000
+      });
       
       // Reset form
       setForm({
@@ -182,10 +296,10 @@ export default function LoanRequestPage() {
       setSelectedBook(null);
       setSelectedEmployee(null);
 
-      // Redirect to loan status page after 2 seconds
+      // Redirect to loan status page after 3 seconds
       setTimeout(() => {
         setLocation('/loans');
-      }, 2000);
+      }, 3000);
 
     } catch (err: any) {
       setError(err.message);
@@ -194,16 +308,7 @@ export default function LoanRequestPage() {
     }
   };
 
-  // Filter books based on search
-  const filteredBooks = books.filter(book => {
-    const searchLower = searchBook.toLowerCase();
-    return (
-      (book.title && book.title.toLowerCase().includes(searchLower)) ||
-      (book.pengarang && book.pengarang.toLowerCase().includes(searchLower)) ||
-      (book.penerbit && book.penerbit.toLowerCase().includes(searchLower)) ||
-      (book.isbn && book.isbn.includes(searchBook))
-    );
-  });
+  const filteredBooks = books;
 
   // Reset selected book if it's no longer in filtered results
   useEffect(() => {
@@ -211,7 +316,7 @@ export default function LoanRequestPage() {
       setSelectedBook(null);
       setForm(prev => ({ ...prev, id_buku: 0 }));
     }
-  }, [searchBook, filteredBooks, selectedBook]);
+  }, [filteredBooks, selectedBook]);
 
   return (
     <div className="container mx-auto p-6 max-w-4xl">
@@ -226,11 +331,7 @@ export default function LoanRequestPage() {
         </Alert>
       )}
 
-      {success && (
-        <Alert className="mb-6 border-green-200 bg-green-50">
-          <AlertDescription className="text-green-800">{success}</AlertDescription>
-        </Alert>
-      )}
+      <NotificationComponent />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Book Selection */}
@@ -254,28 +355,43 @@ export default function LoanRequestPage() {
                 onChange={(e) => setSearchBook(e.target.value)}
                 className="mb-2"
               />
-              {searchBook && (
-                <p className="text-sm text-gray-600">
-                  {filteredBooks.length} book(s) found
-                  {filteredBooks.length === 0 && " - try different keywords"}
-                </p>
-              )}
+              <div className="flex items-center justify-between text-sm text-gray-600 min-h-[1.25rem]">
+                {loadingBooks ? (
+                  <span>Searching books...</span>
+                ) : (
+                  <span>
+                    {filteredBooks.length} match(es)
+                    {booksTotal > filteredBooks.length && ` of ${booksTotal} total`}
+                  </span>
+                )}
+                {!loadingBooks && booksTotal > BOOK_SUGGESTION_LIMIT && (
+                  <span className="text-xs text-gray-500">
+                    Showing top {BOOK_SUGGESTION_LIMIT}. Refine your search for more precise matches.
+                  </span>
+                )}
+              </div>
             </div>
             
             <div>
               <Label htmlFor="book-select">Available Books *</Label>
-              <Select onValueChange={handleBookSelect} required>
-                <SelectTrigger>
+              <Select value={selectedBook?.id_buku.toString()} onValueChange={handleBookSelect} required>
+                <SelectTrigger className="min-h-[3.5rem] items-start py-3 text-left [&>span]:line-clamp-2 [&>span]:whitespace-normal">
                   <SelectValue placeholder={
-                    filteredBooks.length === 0 && searchBook 
-                      ? "No books match your search" 
-                      : `Select a book (${filteredBooks.length} available)`
+                    loadingBooks
+                      ? 'Loading books...'
+                      : filteredBooks.length === 0
+                        ? (searchBook ? 'No books match your search' : 'No books currently available')
+                        : `Select a book (showing up to ${BOOK_SUGGESTION_LIMIT})`
                   } />
                 </SelectTrigger>
                 <SelectContent>
                   {filteredBooks.map((book) => (
-                    <SelectItem key={book.id_buku} value={book.id_buku.toString()}>
-                      <div className="flex flex-col">
+                    <SelectItem
+                      key={book.id_buku}
+                      value={book.id_buku.toString()}
+                      className="whitespace-normal leading-snug py-2"
+                    >
+                      <div className="flex flex-col gap-1">
                         <span className="font-medium">{book.title}</span>
                         <span className="text-sm text-gray-500">
                           by {book.pengarang} • ISBN: {book.isbn}
@@ -315,14 +431,30 @@ export default function LoanRequestPage() {
               <Label htmlFor="nik">Employee NIK *</Label>
               <Input
                 id="nik"
-                placeholder="Enter your employee NIK"
+                placeholder="Enter your employee NIK (e.g., 20000748)"
                 value={form.employee_nik}
                 onChange={(e) => handleNikChange(e.target.value)}
                 required
+                className={selectedEmployee ? "border-green-500" : ""}
               />
               {selectedEmployee && (
-                <p className="text-sm text-green-600 mt-1">
-                  ✓ Employee found: {selectedEmployee.name} ({selectedEmployee.department})
+                <div className="mt-2 p-3 bg-green-50 border border-green-200 rounded-lg">
+                  <p className="text-sm text-green-800 font-medium">
+                    ✓ Employee found: {selectedEmployee.name}
+                  </p>
+                  <p className="text-xs text-green-600">
+                    Department: {selectedEmployee.department} • Position: {selectedEmployee.position || 'Staff'}
+                  </p>
+                </div>
+              )}
+              {form.employee_nik.length >= 3 && !selectedEmployee && (
+                <p className="text-sm text-amber-600 mt-1">
+                  🔍 Searching for employee... Try entering more digits if not found.
+                </p>
+              )}
+              {form.employee_nik.length < 3 && form.employee_nik.length > 0 && (
+                <p className="text-sm text-gray-500 mt-1">
+                  Enter at least 3 digits to search for employee
                 </p>
               )}
             </div>

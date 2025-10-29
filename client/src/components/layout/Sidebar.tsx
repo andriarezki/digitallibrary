@@ -10,7 +10,8 @@ import {
   BookOpen,
   FileText,
   LogOut,
-  User
+  User,
+  UserCheck
 } from "lucide-react";
 
 export function Sidebar() {
@@ -29,8 +30,9 @@ export function Sidebar() {
     ...(isAdminOrPetugas ? [{ name: "Location", href: "/locations", icon: Archive }] : []),
     { name: "Loans", href: "/loans", icon: BookOpen },
     { name: "About", href: "/about", icon: FileText },
-    // Only show Users for admin
-    ...(isAdmin ? [{ name: "Users", href: "/users", icon: Users }] : []),
+    // Only show Users and Staff for admin/petugas
+    ...(isAdminOrPetugas ? [{ name: "Users", href: "/users", icon: Users }] : []),
+    ...(isAdminOrPetugas ? [{ name: "Staff", href: "/staff", icon: UserCheck }] : []),
     // Only include Reports if admin
     ...(isAdmin ? [{ name: "Reports", href: "/reports", icon: FileText }] : []),
   ];

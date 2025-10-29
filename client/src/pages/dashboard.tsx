@@ -520,17 +520,45 @@ export default function DashboardPage() {
 
         {/* Charts Section - 4 Charts in 2x2 Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          {/* 1. Top 5 Document Collection (Bar Chart) */}
+          {/* 1. Top 5 Document Collection (List View) */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Top 5 Document Collection</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Top 5 Book Categories</CardTitle>
             </CardHeader>
             <CardContent>
               {categoriesLoading ? (
-                <Skeleton className="h-64 w-full" />
+                <div className="space-y-3">
+                  {[1, 2, 3, 4, 5].map(i => (
+                    <Skeleton key={i} className="h-12 w-full" />
+                  ))}
+                </div>
               ) : (
-                <div className="h-64">
-                  <Bar data={topDocumentChartData} options={barChartOptions} />
+                <div className="space-y-3">
+                  {topCategories?.slice(0, 5).map((category, index) => (
+                    <div key={category.id} className="flex items-center justify-between p-3 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors">
+                      <div className="flex items-center space-x-3">
+                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold ${
+                          index === 0 ? 'bg-blue-500' :
+                          index === 1 ? 'bg-purple-500' :
+                          index === 2 ? 'bg-pink-500' :
+                          index === 3 ? 'bg-green-500' :
+                          'bg-orange-500'
+                        }`}>
+                          {index + 1}
+                        </div>
+                        <span className="font-medium text-slate-700">{category.name}</span>
+                      </div>
+                      <span className="text-sm font-semibold text-slate-600">
+                        {category.count.toLocaleString()} books
+                      </span>
+                    </div>
+                  ))}
+                  {(!topCategories || topCategories.length === 0) && (
+                    <div className="text-center py-8 text-slate-500">
+                      <Book className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                      <p>No category data available</p>
+                    </div>
+                  )}
                 </div>
               )}
             </CardContent>
