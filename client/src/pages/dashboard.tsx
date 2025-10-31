@@ -415,7 +415,7 @@ export default function DashboardPage() {
   return (
     <div className="min-h-screen">
       {/* Header */}
-      <div className="bg-white border-b border-slate-200 px-6 py-4">
+  <div className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-40">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
           <div className="flex items-center space-x-4">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { PDFViewer } from "@/components/ui/pdf-viewer";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { Plus, Search, Eye, Edit, Trash2, Filter, X, FileText, File, Image, Volume2, Video, Archive } from "lucide-react";
+import { Plus, Search, Eye, Edit, Trash2, Filter, X, FileText, File, Image, Volume2, Video, Archive, Loader2 } from "lucide-react";
 import { Highlight } from "@/components/ui/highlight";
 import { BukuWithDetails, Kategori, Lokasi } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -18,19 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useUser } from "@/context/UserContext";
 
 // Predefined categories list
-const PREDEFINED_CATEGORIES = [
-  "Book",
-  "Journal", 
-  "Proceeding",
-  "Audio Visual",
-  "Catalogue",
-  "Flyer",
-  "Training",
-  "Poster", 
-  "Thesis",
-  "Report",
-  "Newspaper"
-];
+const CATEGORY_PRIORITY = ["Journal", "Book", "Proceeding", "Report"];
 
 interface BooksResponse {
   books: BukuWithDetails[];
@@ -41,6 +29,7 @@ export default function BooksPage() {
   const [, setLocation] = useLocation();
   const user = useUser();
   const isAdminOrPetugas = user?.level === "admin" || user?.level === "petugas";
+  const isAdmin = user?.level === "admin";
 
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(25);
@@ -56,6 +45,7 @@ export default function BooksPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [bookToDelete, setBookToDelete] = useState<BukuWithDetails | null>(null);
+  const [pendingDepartmentId, setPendingDepartmentId] = useState<number | null>(null);
   
   // Edit form state
   const [editForm, setEditForm] = useState({
@@ -178,6 +168,47 @@ export default function BooksPage() {
     queryKey: ["/api/years"],
   });
 
+  const sortedCategories = useMemo(() => {
+    if (!categories) return [] as Kategori[];
+
+    const prioritized = CATEGORY_PRIORITY.map((name) =>
+      categories.find(
+        (category) => category.nama_kategori?.toLowerCase() === name.toLowerCase()
+      )
+    ).filter((category): category is Kategori => Boolean(category));
+
+    const remaining = categories
+      .filter(
+        (category) =>
+          !CATEGORY_PRIORITY.some(
+            (name) => category.nama_kategori?.toLowerCase() === name.toLowerCase()
+          )
+      )
+      .sort((a, b) =>
+        (a.nama_kategori || "").localeCompare(b.nama_kategori || "", undefined, {
+          sensitivity: "base",
+        })
+      );
+
+    return [...prioritized, ...remaining];
+  }, [categories]);
+
+  const sortedDepartments = useMemo(() => {
+    if (!departments) return [] as string[];
+
+    const uniqueDepartments = Array.from(
+      new Set(
+        departments
+          .map((item) => item.department?.trim())
+          .filter((name): name is string => Boolean(name))
+      )
+    );
+
+    return uniqueDepartments.sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" })
+    );
+  }, [departments]);
+
   // Delete mutation
   const deleteMutation = useMutation({
     mutationFn: async (bookId: number) => {
@@ -283,8 +314,8 @@ export default function BooksPage() {
         penerbit: "",
         thn_buku: "",
         isbn: "",
-        id_kategori: "0",
-        id_lokasi: "0",
+        id_kategori: undefined,
+        id_lokasi: undefined,
         tersedia: 1,
         department: "",
         file_type: ""
@@ -295,6 +326,40 @@ export default function BooksPage() {
       toast({
         title: "Error",
         description: error.message || "Failed to add book",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateDepartmentMutation = useMutation({
+    mutationFn: async ({ id, department }: { id: number; department?: string }) => {
+      const formData = new FormData();
+      formData.append("department", department ?? "");
+
+      const response = await fetch(`/api/books/${id}`, {
+        method: "PATCH",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update department: ${response.status} ${errorText}`);
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/books"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      toast({
+        title: "Success",
+        description: "Department updated",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update department",
         variant: "destructive",
       });
     },
@@ -318,6 +383,19 @@ export default function BooksPage() {
   const handleDepartmentChange = (value: string) => {
     setDepartmentFilter(value === "all" ? "" : value);
     setPage(1);
+  };
+
+  const handleQuickDepartmentChange = (book: BukuWithDetails, value: string) => {
+    const departmentValue = value === "none" ? undefined : value;
+    setPendingDepartmentId(book.id_buku);
+    updateDepartmentMutation.mutate(
+      { id: book.id_buku, department: departmentValue },
+      {
+        onSettled: () => {
+          setPendingDepartmentId((current) => (current === book.id_buku ? null : current));
+        },
+      }
+    );
   };
 
   const openPDFViewer = (book: BukuWithDetails) => {
@@ -390,10 +468,26 @@ export default function BooksPage() {
   };
 
   const handleAddFormChange = (field: string, value: string | number | undefined) => {
-    setAddForm(prev => ({
-      ...prev,
-      [field]: value === "" || value === "0" ? undefined : value
-    }));
+    setAddForm((prev) => {
+      if (field === "id_kategori" || field === "id_lokasi") {
+        if (value === undefined || value === "none") {
+          return { ...prev, [field]: undefined };
+        }
+        return { ...prev, [field]: value.toString() };
+      }
+
+      if (field === "department" || field === "file_type") {
+        if (value === undefined || value === "none") {
+          return { ...prev, [field]: "" };
+        }
+        return { ...prev, [field]: value.toString() };
+      }
+
+      return {
+        ...prev,
+        [field]: value ?? "",
+      };
+    });
   };
 
   const handleSaveAdd = () => {
@@ -488,13 +582,16 @@ export default function BooksPage() {
             </div>
           </div>
           
-          <Select onValueChange={handleCategoryChange}>
+          <Select
+            value={categoryId !== undefined ? categoryId.toString() : "all"}
+            onValueChange={handleCategoryChange}
+          >
             <SelectTrigger className="w-48">
               <SelectValue placeholder="All Categories" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Categories</SelectItem>
-              {categories?.map((category) => (
+              {sortedCategories.map((category) => (
                 <SelectItem key={category.id_kategori} value={category.id_kategori.toString()}>
                   {category.nama_kategori}
                 </SelectItem>
@@ -502,19 +599,20 @@ export default function BooksPage() {
             </SelectContent>
           </Select>
 
-          <Select onValueChange={handleDepartmentChange}>
+          <Select
+            value={departmentFilter || "all"}
+            onValueChange={handleDepartmentChange}
+          >
             <SelectTrigger className="w-48">
               <SelectValue placeholder="All Departments" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All Departments</SelectItem>
-              <SelectItem value="DIAD">DIAD</SelectItem>
-              <SelectItem value="Sustainability">Sustainability</SelectItem>
-              <SelectItem value="Agronomy">Agronomy</SelectItem>
-              <SelectItem value="Crop Protection">Crop Protection</SelectItem>
-              <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
-              <SelectItem value="Laboratory">Laboratory</SelectItem>
-              <SelectItem value="FOESD">FOESD</SelectItem>
+              {sortedDepartments.map((department) => (
+                <SelectItem key={department} value={department}>
+                  {department}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -582,6 +680,11 @@ export default function BooksPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Department
                     </th>
+                    {isAdmin && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                        Assign Department
+                      </th>
+                    )}
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Year
                     </th>
@@ -618,6 +721,7 @@ export default function BooksPage() {
                         <td className="px-6 py-4"><Skeleton className="h-4 w-32" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-4 w-20" /></td>
+                        {isAdmin && <td className="px-6 py-4"><Skeleton className="h-4 w-24" /></td>}
                         <td className="px-6 py-4"><Skeleton className="h-4 w-12" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-6 w-16 rounded-full" /></td>
                         <td className="px-6 py-4"><Skeleton className="h-8 w-8" /></td>
@@ -670,6 +774,35 @@ export default function BooksPage() {
                             <Highlight text={book.department || "N/A"} highlight={search} />
                           </div>
                         </td>
+                        {isAdmin && (
+                          <td className="px-6 py-4 text-sm text-slate-900">
+                            <div className="max-w-[220px]">
+                              <Select
+                                value={book.department && book.department !== "" ? book.department : "none"}
+                                onValueChange={(value) => handleQuickDepartmentChange(book, value)}
+                                disabled={pendingDepartmentId === book.id_buku}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Assign department" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">Unassigned Department</SelectItem>
+                                  {sortedDepartments.map((department) => (
+                                    <SelectItem key={department} value={department}>
+                                      {department}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {pendingDepartmentId === book.id_buku && (
+                                <div className="flex items-center mt-2 text-xs text-slate-500">
+                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                  Saving…
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">
                           {book.thn_buku || "N/A"}
                         </td>
@@ -965,16 +1098,18 @@ export default function BooksPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-2">Category</label>
-                    <Select 
-                      value={editForm.id_kategori || ""} 
-                      onValueChange={(value) => handleEditFormChange("id_kategori", value === "none" ? undefined : value)}
+                    <Select
+                      value={editForm.id_kategori && editForm.id_kategori !== "" ? editForm.id_kategori : "none"}
+                      onValueChange={(value) =>
+                        handleEditFormChange("id_kategori", value === "none" ? undefined : value)
+                      }
                     >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="0">No Category</SelectItem>
-                        {categories?.map((category) => (
+                        <SelectItem value="none">Unassigned Category</SelectItem>
+                        {sortedCategories.map((category) => (
                           <SelectItem key={category.id_kategori} value={category.id_kategori.toString()}>
                             {category.nama_kategori}
                           </SelectItem>
@@ -985,37 +1120,39 @@ export default function BooksPage() {
                   
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                  <Select 
-                    value={editForm.department || ""} 
-                    onValueChange={(value) => handleEditFormChange("department", value === "none" ? undefined : value)}
+                  <Select
+                    value={editForm.department && editForm.department !== "" ? editForm.department : "none"}
+                    onValueChange={(value) =>
+                      handleEditFormChange("department", value === "none" ? undefined : value)
+                    }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select department" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">No Department</SelectItem>
-                      <SelectItem value="DIAD">DIAD</SelectItem>
-                      <SelectItem value="Sustainability">Sustainability</SelectItem>
-                      <SelectItem value="Agronomy">Agronomy</SelectItem>
-                      <SelectItem value="Crop Protection">Crop Protection</SelectItem>
-                      <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
-                      <SelectItem value="Laboratory">Laboratory</SelectItem>
-                      <SelectItem value="FOESD">FOESD</SelectItem>
+                      <SelectItem value="none">Unassigned Department</SelectItem>
+                      {sortedDepartments.map((department) => (
+                        <SelectItem key={department} value={department}>
+                          {department}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
                 
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Location</label>
-                  <Select 
-                    value={editForm.id_lokasi || ""} 
-                    onValueChange={(value) => handleEditFormChange("id_lokasi", value === "none" ? undefined : value)}
+                  <Select
+                    value={editForm.id_lokasi && editForm.id_lokasi !== "" ? editForm.id_lokasi : "none"}
+                    onValueChange={(value) =>
+                      handleEditFormChange("id_lokasi", value === "none" ? undefined : value)
+                    }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select location" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="0">No Location</SelectItem>
+                      <SelectItem value="none">Unassigned Location</SelectItem>
                       {locations?.map((location) => (
                         <SelectItem key={location.id_lokasi} value={location.id_lokasi.toString()}>
                           {location.nama_lokasi}
@@ -1173,16 +1310,18 @@ export default function BooksPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Category</label>
-                  <Select 
+                  <Select
                     value={addForm.id_kategori ?? "none"}
-                    onValueChange={(value) => handleAddFormChange("id_kategori", value === "none" ? undefined : value)}
+                    onValueChange={(value) =>
+                      handleAddFormChange("id_kategori", value === "none" ? undefined : value)
+                    }
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue placeholder="Select category" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">No Category</SelectItem>
-                      {categories?.map((category) => (
+                      <SelectItem value="none">Unassigned Category</SelectItem>
+                      {sortedCategories.map((category) => (
                         <SelectItem key={category.id_kategori} value={category.id_kategori.toString()}>
                           {category.nama_kategori}
                         </SelectItem>
@@ -1193,22 +1332,22 @@ export default function BooksPage() {
                 
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">Department</label>
-                <Select 
-                  value={addForm.department || ""} 
-                  onValueChange={(value) => handleAddFormChange("department", value === "none" ? undefined : value)}
+                <Select
+                  value={addForm.department && addForm.department !== "" ? addForm.department : "none"}
+                  onValueChange={(value) =>
+                    handleAddFormChange("department", value === "none" ? undefined : value)
+                  }
                 >
                   <SelectTrigger className="w-full">
                     <SelectValue placeholder="Select department" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No Department</SelectItem>
-                    <SelectItem value="DIAD">DIAD</SelectItem>
-                    <SelectItem value="Sustainability">Sustainability</SelectItem>
-                    <SelectItem value="Agronomy">Agronomy</SelectItem>
-                    <SelectItem value="Crop Protection">Crop Protection</SelectItem>
-                    <SelectItem value="Plant Breeding">Plant Breeding</SelectItem>
-                    <SelectItem value="Laboratory">Laboratory</SelectItem>
-                    <SelectItem value="FOESD">FOESD</SelectItem>
+                    <SelectItem value="none">Unassigned Department</SelectItem>
+                    {sortedDepartments.map((department) => (
+                      <SelectItem key={department} value={department}>
+                        {department}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1223,7 +1362,7 @@ export default function BooksPage() {
                     <SelectValue placeholder="Select location" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="none">No Location</SelectItem>
+                    <SelectItem value="none">Unassigned Location</SelectItem>
                     {locations?.map((location) => (
                       <SelectItem key={location.id_lokasi} value={location.id_lokasi.toString()}>
                         {location.nama_lokasi}

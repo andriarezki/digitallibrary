@@ -4,7 +4,11 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 
+// Default to production mode when NODE_ENV is not explicitly set (e.g. offline servers)
+process.env.NODE_ENV = process.env.NODE_ENV || "production";
+
 const app = express();
+app.set("env", process.env.NODE_ENV);
 
 // Enable gzip compression for better performance
 app.use(compression({
