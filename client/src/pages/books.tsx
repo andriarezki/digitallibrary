@@ -46,6 +46,7 @@ export default function BooksPage() {
   const [addDialogOpen, setAddDialogOpen] = useState(false);
   const [bookToDelete, setBookToDelete] = useState<BukuWithDetails | null>(null);
   const [pendingDepartmentId, setPendingDepartmentId] = useState<number | null>(null);
+  const [pendingCategoryId, setPendingCategoryId] = useState<number | null>(null);
   
   // Edit form state
   const [editForm, setEditForm] = useState({
@@ -365,6 +366,43 @@ export default function BooksPage() {
     },
   });
 
+  const updateCategoryMutation = useMutation({
+    mutationFn: async ({ id, categoryId }: { id: number; categoryId: number }) => {
+      const formData = new FormData();
+      formData.append("id_kategori", categoryId.toString());
+
+      const response = await fetch(`/api/books/${id}`, {
+        method: "PATCH",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to update category: ${response.status} ${errorText}`);
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/books"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/top-categories"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard/most-read-by-category"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/categories"] });
+      toast({
+        title: "Success",
+        description: "Category updated",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to update category",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleSearch = (value: string) => {
     setSearch(value);
     setPage(1);
@@ -393,6 +431,22 @@ export default function BooksPage() {
       {
         onSettled: () => {
           setPendingDepartmentId((current) => (current === book.id_buku ? null : current));
+        },
+      }
+    );
+  };
+
+  const handleQuickCategoryChange = (book: BukuWithDetails, value: string) => {
+    if (!value) return;
+    const categoryId = Number(value);
+    if (Number.isNaN(categoryId)) return;
+
+    setPendingCategoryId(book.id_buku);
+    updateCategoryMutation.mutate(
+      { id: book.id_buku, categoryId },
+      {
+        onSettled: () => {
+          setPendingCategoryId((current) => (current === book.id_buku ? null : current));
         },
       }
     );
@@ -677,6 +731,11 @@ export default function BooksPage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Category
                     </th>
+                    {isAdmin && (
+                      <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
+                        Assign Category
+                      </th>
+                    )}
                     <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider bg-slate-50">
                       Department
                     </th>
@@ -769,6 +828,48 @@ export default function BooksPage() {
                             <Highlight text={book.kategori_nama || "Uncategorized"} highlight={search} />
                           </div>
                         </td>
+                        {isAdmin && (
+                          <td className="px-6 py-4 text-sm text-slate-900">
+                            <div className="max-w-[220px]">
+                              <Select
+                                value={book.id_kategori !== null && book.id_kategori !== undefined ? book.id_kategori.toString() : undefined}
+                                onValueChange={(value) => handleQuickCategoryChange(book, value)}
+                                disabled={pendingCategoryId === book.id_buku || sortedCategories.length === 0}
+                              >
+                                <SelectTrigger className="w-full">
+                                  <SelectValue placeholder="Assign category" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {sortedCategories.length === 0 ? (
+                                    <SelectItem value="no-categories" disabled>
+                                      No categories available
+                                    </SelectItem>
+                                  ) : (
+                                    <>
+                                      {book.id_kategori !== null && book.id_kategori !== undefined &&
+                                        !sortedCategories.some((category) => category.id_kategori === book.id_kategori) && (
+                                          <SelectItem value={String(book.id_kategori)}>
+                                            {book.kategori_nama || `Category #${book.id_kategori}`}
+                                          </SelectItem>
+                                        )}
+                                      {sortedCategories.map((category) => (
+                                        <SelectItem key={category.id_kategori} value={String(category.id_kategori)}>
+                                          {category.nama_kategori}
+                                        </SelectItem>
+                                      ))}
+                                    </>
+                                  )}
+                                </SelectContent>
+                              </Select>
+                              {pendingCategoryId === book.id_buku && (
+                                <div className="flex items-center mt-2 text-xs text-slate-500">
+                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                  Saving…
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        )}
                         <td className="px-6 py-4 text-sm text-slate-900">
                           <div className="max-w-[120px] break-words">
                             <Highlight text={book.department || "N/A"} highlight={search} />
