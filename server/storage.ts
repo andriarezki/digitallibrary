@@ -34,6 +34,7 @@ import {
 } from "@shared/schema";
 import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { addDays } from "date-fns";
 
 // IP-based visitor tracking (in-memory, resets on server restart)
 const siteVisitorIPs = new Set<string>();
@@ -87,27 +88,37 @@ export async function recordPdfView(bookId: number, categoryId: number, ip: stri
 // Database-based site visitor tracking
 export async function recordSiteVisitor(ip: string, userAgent?: string) {
   try {
-    // Try to update existing visitor
+    const now = new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+
+    // Look for an existing record for this IP within the current month
     const existingVisitor = await db
       .select()
       .from(tblSiteVisitors)
-      .where(eq(tblSiteVisitors.ip_address, ip))
+      .where(
+        and(
+          eq(tblSiteVisitors.ip_address, ip),
+          sql`DATE_FORMAT(${tblSiteVisitors.first_visit}, '%Y-%m') = ${currentYearMonth}`
+        )
+      )
       .limit(1);
 
     if (existingVisitor.length > 0) {
-      // Update existing visitor
+      // Update existing visitor record for this month
       await db
         .update(tblSiteVisitors)
         .set({
-          last_visit: new Date(),
+          last_visit: now,
           visit_count: sql`visit_count + 1`
         })
-        .where(eq(tblSiteVisitors.ip_address, ip));
+        .where(eq(tblSiteVisitors.id, existingVisitor[0].id));
     } else {
-      // Insert new visitor
+      // Insert a fresh visitor record for the new month
       await db.insert(tblSiteVisitors).values({
         ip_address: ip,
-        user_agent: userAgent
+        user_agent: userAgent,
+        first_visit: now,
+        last_visit: now
       });
     }
   } catch (error) {
@@ -203,6 +214,7 @@ export interface IStorage {
   getLoanRequestStats(): Promise<{ pending: number; active: number; completed: number; overdue: number }>;
   getUserLoanRequestStats(userId: number): Promise<{ pending: number; approved: number; returned: number }>;
   getUserLoanRequestStatsByNik(employeeNik: string): Promise<{ pending: number; approved: number; returned: number }>;
+  getMonthlyLoanBorrowed(): Promise<Array<{ month: string; borrowed: number }>>;
 
   // Loan history methods
   getLoanHistory(requestId: number): Promise<LoanHistory[]>;
@@ -445,11 +457,18 @@ export class DatabaseStorage implements IStorage {
       WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
         AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
     ))`;
+    const bookCategoryCondition = eq(tblKategori.nama_kategori, 'Book');
     const likeQuery = search ? `%${search}%` : undefined;
     const searchCondition = likeQuery
       ? sql`(${tblBuku.title} LIKE ${likeQuery} OR ${tblBuku.pengarang} LIKE ${likeQuery} OR ${tblBuku.penerbit} LIKE ${likeQuery} OR ${tblBuku.isbn} LIKE ${likeQuery})`
       : undefined;
-    const whereClause = searchCondition ? and(availabilityCondition, searchCondition) : availabilityCondition;
+
+    const conditions: Array<any> = [availabilityCondition, bookCategoryCondition];
+    if (searchCondition) {
+      conditions.push(searchCondition);
+    }
+
+    const combinedCondition = and(...conditions);
 
     const booksQuery = db
       .select({
@@ -476,14 +495,15 @@ export class DatabaseStorage implements IStorage {
       .from(tblBuku)
       .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
       .leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi))
-      .where(whereClause)
+      .where(combinedCondition)
       .orderBy(asc(tblBuku.title))
       .limit(limit);
 
     const countQuery = db
       .select({ count: count() })
       .from(tblBuku)
-      .where(whereClause);
+      .leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori))
+      .where(combinedCondition);
 
     const [books, totalResult] = await Promise.all([booksQuery, countQuery]);
     const total = totalResult[0]?.count ?? 0;
@@ -980,9 +1000,9 @@ export class DatabaseStorage implements IStorage {
         ];
       }
 
-      // Get unique IP visitors for the last 6 months
-      const sixMonthsAgo = new Date();
-      sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+      // Get unique IP visitors for the current month plus the previous five months
+      const currentDate = new Date();
+      const sixMonthWindowStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 5, 1);
 
       const results = await db
         .select({
@@ -990,13 +1010,12 @@ export class DatabaseStorage implements IStorage {
           activeUsers: sql<number>`COUNT(DISTINCT ip_address)` // Count unique IP addresses instead of user_id
         })
         .from(tblSiteVisitors)
-        .where(sql`first_visit >= ${sixMonthsAgo.toISOString().split('T')[0]}`)
+        .where(sql`first_visit >= ${sixMonthWindowStart.toISOString().split('T')[0]}`)
         .groupBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`)
         .orderBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`);
 
       // Convert to month names and ensure we have data for the last 6 months
       const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-      const currentDate = new Date();
       const monthlyData: Array<{ month: string; activeUsers: number }> = [];
 
       for (let i = 5; i >= 0; i--) {
@@ -1085,8 +1104,8 @@ export class DatabaseStorage implements IStorage {
   async getDatabaseVisitorStats(): Promise<{ siteVisitorCount: number; pdfViewCount: number; uniquePdfViewers: number }> {
     try {
       const [siteVisitors, pdfViews, uniquePdfViewers] = await Promise.all([
-        // Count unique site visitors
-        db.select({ count: count() }).from(tblSiteVisitors),
+        // Count unique site visitors (distinct IPs across all time)
+        db.select({ count: count(sql`DISTINCT ${tblSiteVisitors.ip_address}`) }).from(tblSiteVisitors),
         // Count total PDF views
         db.select({ count: count() }).from(tblPdfViews),
         // Count unique PDF viewers (distinct IPs that viewed PDFs)
@@ -1344,15 +1363,23 @@ export class DatabaseStorage implements IStorage {
         throw new Error('Loan request not found');
       }
 
+      const approvalDate = new Date();
+      const autoDueDate = addDays(approvalDate, 14);
+
       await db.update(tblLoanRequests).set({
         status: 'approved',
         approved_by: adminId,
-        approval_date: new Date(),
+        approval_date: approvalDate,
         approval_notes: notes,
+        due_date: autoDueDate,
       }).where(eq(tblLoanRequests.id, id));
 
       // Log the approval action
-      await this.logLoanAction(id, 'approved', adminId, notes, 'pending', 'approved');
+      const logNotes = notes
+        ? `${notes} (Due date auto-set to ${autoDueDate.toISOString().split('T')[0]})`
+        : `Due date auto-set to ${autoDueDate.toISOString().split('T')[0]}`;
+
+      await this.logLoanAction(id, 'approved', adminId, logNotes, 'pending', 'approved');
 
       // Update document repository (book) status to not available when approved
       try {
@@ -1595,6 +1622,44 @@ export class DatabaseStorage implements IStorage {
     } catch (error) {
       console.error('Error fetching user loan request stats by NIK:', error);
       return { pending: 0, approved: 0, returned: 0 };
+    }
+  }
+
+  async getMonthlyLoanBorrowed(): Promise<Array<{ month: string; borrowed: number }>> {
+    try {
+      const borrowDateExpression = sql`COALESCE(${tblLoanRequests.loan_date}, ${tblLoanRequests.approval_date})`;
+      const startDate = new Date();
+      startDate.setHours(0, 0, 0, 0);
+      startDate.setDate(1);
+      startDate.setMonth(startDate.getMonth() - 11); // Last 12 months including current
+
+      const rawResults = await db
+        .select({
+          monthKey: sql<string>`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`,
+          borrowed: sql<number>`COUNT(*)`
+        })
+        .from(tblLoanRequests)
+        .where(and(
+          sql`${borrowDateExpression} IS NOT NULL`,
+          sql`${borrowDateExpression} >= ${startDate.toISOString().split('T')[0]}`,
+          sql`${tblLoanRequests.status} NOT IN ('pending', 'rejected')`
+        ))
+        .groupBy(sql`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`)
+        .orderBy(sql`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`);
+
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+      return rawResults.map(result => {
+        const [year, month] = result.monthKey.split('-');
+        const monthIndex = Math.max(0, Math.min(11, parseInt(month, 10) - 1));
+        return {
+          month: `${monthNames[monthIndex]} ${year}`,
+          borrowed: result.borrowed
+        };
+      });
+    } catch (error) {
+      console.error('Error fetching monthly loan borrowed stats:', error);
+      return [];
     }
   }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLocation } from 'wouter';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,7 +9,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { format } from 'date-fns';
+import { addDays, format } from 'date-fns';
 import { CalendarIcon, BookOpen, User, Mail, Phone, Building, FileText } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useCenteredNotification } from '@/components/ui/centered-notification';
@@ -34,6 +34,7 @@ interface Book {
 }
 
 const BOOK_SUGGESTION_LIMIT = 20;
+const MAX_LOAN_PERIOD_DAYS = 14;
 
 interface LoanRequestForm {
   id_buku: number;
@@ -67,6 +68,17 @@ export default function LoanRequestPage() {
     requested_return_date: undefined,
     reason: ''
   });
+
+  const startOfToday = useMemo(() => {
+    const date = new Date();
+    date.setHours(0, 0, 0, 0);
+    return date;
+  }, []);
+
+  const maxSelectableReturnDate = useMemo(
+    () => addDays(startOfToday, MAX_LOAN_PERIOD_DAYS),
+    [startOfToday]
+  );
 
   // Debounce search term to avoid spamming the API
   useEffect(() => {
@@ -256,6 +268,10 @@ export default function LoanRequestPage() {
         throw new Error('Please select a requested return date');
       }
 
+      if (form.requested_return_date > maxSelectableReturnDate) {
+        throw new Error(`Requested return date must be within ${MAX_LOAN_PERIOD_DAYS} days from today`);
+      }
+
       // Submit loan request
       const response = await fetch('/api/loan-requests', {
         method: 'POST',
@@ -278,7 +294,7 @@ export default function LoanRequestPage() {
       // Show centered success notification
       showNotification({
         title: "Loan Request Submitted!",
-        description: `Your loan request has been submitted successfully. Request ID: ${result.request_id}`,
+        description: `Your loan request has been submitted successfully. Request ID: ${result.request_id}. Reminder: the maximum loan period is ${MAX_LOAN_PERIOD_DAYS} days from approval.`,
         type: "success",
         duration: 5000
       });
@@ -317,6 +333,12 @@ export default function LoanRequestPage() {
       setForm(prev => ({ ...prev, id_buku: 0 }));
     }
   }, [filteredBooks, selectedBook]);
+
+  useEffect(() => {
+    if (form.requested_return_date && form.requested_return_date > maxSelectableReturnDate) {
+      setForm(prev => ({ ...prev, requested_return_date: maxSelectableReturnDate }));
+    }
+  }, [form.requested_return_date, maxSelectableReturnDate]);
 
   return (
     <div className="container mx-auto p-6 max-w-4xl">
@@ -528,8 +550,16 @@ export default function LoanRequestPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            <Alert className="border-amber-200 bg-amber-50">
+              <AlertDescription className="text-amber-800">
+                Loan approvals are limited to {MAX_LOAN_PERIOD_DAYS} days. Once approved, the system automatically locks the due date to {MAX_LOAN_PERIOD_DAYS} days after approval.
+              </AlertDescription>
+            </Alert>
             <div>
               <Label>Requested Return Date *</Label>
+              <p className="text-sm text-gray-500 mt-1">
+                Choose any date within the next {MAX_LOAN_PERIOD_DAYS} days. The final due date will be fixed to {MAX_LOAN_PERIOD_DAYS} days after approval.
+              </p>
               <Popover>
                 <PopoverTrigger asChild>
                   <Button
@@ -552,7 +582,7 @@ export default function LoanRequestPage() {
                     mode="single"
                     selected={form.requested_return_date}
                     onSelect={(date) => setForm(prev => ({ ...prev, requested_return_date: date }))}
-                    disabled={(date) => date < new Date()}
+                    disabled={(date) => date < startOfToday || date > maxSelectableReturnDate}
                     initialFocus
                   />
                 </PopoverContent>

@@ -57,6 +57,11 @@ interface MonthlyActivity {
   activeUsers: number;
 }
 
+interface MonthlyLoans {
+  month: string;
+  borrowed: number;
+}
+
 interface WeeklyBooks {
   week: string;
   booksAdded: number;
@@ -92,6 +97,12 @@ export default function DashboardPage() {
     queryKey: ["/api/dashboard/monthly-activity"],
     staleTime: 5 * 60 * 1000, // 5 minutes cache
     gcTime: 10 * 60 * 1000, // 10 minutes garbage collection
+  });
+
+  const { data: monthlyLoans, isLoading: monthlyLoansLoading } = useQuery<MonthlyLoans[]>({
+    queryKey: ["/api/dashboard/monthly-loans"],
+    staleTime: 5 * 60 * 1000,
+    gcTime: 10 * 60 * 1000,
   });
 
   const { data: weeklyBooks, isLoading: weeklyBooksLoading } = useQuery<WeeklyBooks[]>({
@@ -189,6 +200,20 @@ export default function DashboardPage() {
       },
     ],
   };
+
+    const monthlyLoansChartData = {
+      labels: monthlyLoans?.map(data => data.month) ?? [],
+      datasets: [
+        {
+          label: 'Books Borrowed',
+          data: monthlyLoans?.map(data => data.borrowed) ?? [],
+          backgroundColor: 'rgba(59, 130, 246, 0.8)',
+          borderColor: 'rgba(59, 130, 246, 1)',
+          borderWidth: 2,
+          borderRadius: 6,
+        },
+      ],
+    };
 
   // 4. Most Read by Category (Doughnut Chart)
   const mostReadChartData = {
@@ -395,6 +420,7 @@ export default function DashboardPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/stats"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/top-categories"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/monthly-activity"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/dashboard/monthly-loans"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/weekly-books"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/documents-by-department"] });
     queryClient.invalidateQueries({ queryKey: ["/api/dashboard/most-read-by-category"] });
@@ -523,7 +549,7 @@ export default function DashboardPage() {
           {/* 1. Top 5 Document Collection (List View) */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-lg font-semibold text-slate-800">Top 5 Book Categories</CardTitle>
+              <CardTitle className="text-lg font-semibold text-slate-800">Top 5 Categories</CardTitle>
             </CardHeader>
             <CardContent>
               {categoriesLoading ? (
@@ -549,7 +575,7 @@ export default function DashboardPage() {
                         <span className="font-medium text-slate-700">{category.name}</span>
                       </div>
                       <span className="text-sm font-semibold text-slate-600">
-                        {category.count.toLocaleString()} books
+                        {category.count.toLocaleString()} documents
                       </span>
                     </div>
                   ))}
@@ -589,8 +615,33 @@ export default function DashboardPage() {
               {activityLoading ? (
                 <Skeleton className="h-64 w-full" />
               ) : (
+                <>
+                  <div className="h-64">
+                    <Line data={siteVisitorData} options={chartOptions} />
+                  </div>
+                  <p className="text-xs text-slate-500 mt-3">
+                    Visitor totals count unique IP addresses accessing the app. Repeat visits from the same IP still count as a single visitor.
+                  </p>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold text-slate-800">Monthly Books Borrowed</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {monthlyLoansLoading ? (
+                <Skeleton className="h-64 w-full" />
+              ) : monthlyLoans && monthlyLoans.length > 0 ? (
                 <div className="h-64">
-                  <Line data={siteVisitorData} options={chartOptions} />
+                  <Bar data={monthlyLoansChartData} options={barChartOptions} />
+                </div>
+              ) : (
+                <div className="h-64 flex flex-col items-center justify-center text-slate-500">
+                  <Book className="w-10 h-10 mb-3 opacity-40" />
+                  <p>No loan activity recorded in the selected period.</p>
                 </div>
               )}
             </CardContent>

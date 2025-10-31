@@ -1,8 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { 
@@ -26,7 +27,7 @@ import { useLocation } from "wouter";
 import { useUser } from "@/context/UserContext";
 import { useCenteredNotification } from "@/components/ui/centered-notification";
 import { apiRequest } from "@/lib/queryClient";
-import { format } from "date-fns";
+import { addDays, format } from "date-fns";
 
 interface LoanRequest {
   id: number;
@@ -66,6 +67,8 @@ interface LoanStats {
   overdue?: number;    // For admin stats only
 }
 
+const MAX_LOAN_PERIOD_DAYS = 14;
+
 export default function LoansPage() {
   const [, setLocation] = useLocation();
   const user = useUser();
@@ -84,6 +87,11 @@ export default function LoansPage() {
   const [searchTerm, setSearchTerm] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [currentPage, setCurrentPage] = useState(1);
+
+  const autoDueDatePreview = useMemo(
+    () => format(addDays(new Date(), MAX_LOAN_PERIOD_DAYS), "PPP"),
+    []
+  );
 
   // Fetch loan requests (admin only)
   const { data: loanRequests, isLoading } = useQuery<{ requests: LoanRequest[]; total: number }>({
@@ -323,6 +331,11 @@ export default function LoansPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <Alert className="mb-4 border-amber-200 bg-amber-50">
+                  <AlertDescription className="text-amber-800">
+                    Approving a request will automatically lock the due date to {MAX_LOAN_PERIOD_DAYS} days after approval.
+                  </AlertDescription>
+                </Alert>
                 {isLoading ? (
                   <div className="flex items-center justify-center py-8">
                     <div className="text-slate-500">Loading loan requests...</div>
@@ -359,6 +372,9 @@ export default function LoansPage() {
                             <div>
                               <div className="font-medium">{formatDateSafe(request.requested_return_date, 'MMM dd, yyyy')}</div>
                               <div className="text-sm text-slate-500">Submitted: {format(new Date(request.created_at), 'MMM dd')}</div>
+                              {request.due_date && (
+                                <div className="text-xs text-amber-700 mt-1">Due date: {formatDateSafe(request.due_date, 'MMM dd, yyyy')} (auto-set)</div>
+                              )}
                             </div>
                           </TableCell>
                           <TableCell>{getStatusBadge(request.status)}</TableCell>
@@ -428,6 +444,11 @@ export default function LoansPage() {
               <CardDescription>Simple steps to borrow books from our digital library</CardDescription>
             </CardHeader>
             <CardContent>
+              <Alert className="mb-6 border-amber-200 bg-amber-50">
+                <AlertDescription className="text-amber-800">
+                  The maximum loan period is {MAX_LOAN_PERIOD_DAYS} days from approval. The system will automatically set and lock your due date when the request is approved.
+                </AlertDescription>
+              </Alert>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="text-center">
                   <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -450,7 +471,7 @@ export default function LoansPage() {
                     <span className="text-green-600 font-bold text-lg">3</span>
                   </div>
                   <h3 className="font-semibold text-slate-900 mb-2">Collect & Return</h3>
-                  <p className="text-sm text-slate-600">Once approved, collect your book and return it by the specified due date</p>
+                  <p className="text-sm text-slate-600">Once approved, collect your book and return it within {MAX_LOAN_PERIOD_DAYS} days. The due date is automatically locked when your request is approved.</p>
                 </div>
               </div>
             </CardContent>
@@ -471,6 +492,11 @@ export default function LoansPage() {
                       <div><strong>Book ID:</strong> {selectedRequest.id_buku}</div>
                       <div><strong>Current Status:</strong> {getStatusBadge(selectedRequest.status)}</div>
                     </div>
+                    {selectedRequest.status === 'pending' && (
+                      <p className="mt-3 text-sm text-amber-700">
+                        Approving right now will automatically set the due date to {autoDueDatePreview} (maximum of {MAX_LOAN_PERIOD_DAYS} days from approval).
+                      </p>
+                    )}
                   </>
                 )}
               </DialogDescription>
@@ -521,6 +547,11 @@ export default function LoansPage() {
             </DialogHeader>
             {selectedRequest && (
               <div className="grid gap-4">
+                <Alert className="border-amber-200 bg-amber-50">
+                  <AlertDescription className="text-amber-800">
+                    Maximum loan period is {MAX_LOAN_PERIOD_DAYS} days from approval. {selectedRequest.due_date ? `This request's due date is ${formatDateSafe(selectedRequest.due_date)}.` : 'The due date will be assigned automatically when the request is approved.'}
+                  </AlertDescription>
+                </Alert>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <label className="text-sm font-medium text-slate-600">Request ID</label>
@@ -572,6 +603,21 @@ export default function LoansPage() {
                   <div>
                     <label className="text-sm font-medium text-slate-600">Requested Return Date</label>
                     <p className="mt-1">{formatDateSafe(selectedRequest.requested_return_date)}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-slate-600">Due Date</label>
+                    <p className="mt-1">
+                      {selectedRequest.due_date
+                        ? formatDateSafe(selectedRequest.due_date)
+                        : `Will be set at approval (${MAX_LOAN_PERIOD_DAYS}-day limit)`}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-slate-600">Loan Date</label>
+                    <p className="mt-1">{formatDateSafe(selectedRequest.loan_date)}</p>
                   </div>
                 </div>
 

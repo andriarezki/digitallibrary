@@ -288,6 +288,7 @@ __export(storage_exports, {
 });
 import { eq, like, or, desc, asc, count, sql, and, isNotNull } from "drizzle-orm";
 import bcrypt from "bcrypt";
+import { addDays } from "date-fns";
 function getCachedData(key) {
   const cached = cache.get(key);
   if (cached && cached.expiry > Date.now()) {
@@ -326,16 +327,25 @@ async function recordPdfView(bookId, categoryId, ip, userAgent, userId) {
 }
 async function recordSiteVisitor(ip, userAgent) {
   try {
-    const existingVisitor = await db.select().from(tblSiteVisitors).where(eq(tblSiteVisitors.ip_address, ip)).limit(1);
+    const now = /* @__PURE__ */ new Date();
+    const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    const existingVisitor = await db.select().from(tblSiteVisitors).where(
+      and(
+        eq(tblSiteVisitors.ip_address, ip),
+        sql`DATE_FORMAT(${tblSiteVisitors.first_visit}, '%Y-%m') = ${currentYearMonth}`
+      )
+    ).limit(1);
     if (existingVisitor.length > 0) {
       await db.update(tblSiteVisitors).set({
-        last_visit: /* @__PURE__ */ new Date(),
+        last_visit: now,
         visit_count: sql`visit_count + 1`
-      }).where(eq(tblSiteVisitors.ip_address, ip));
+      }).where(eq(tblSiteVisitors.id, existingVisitor[0].id));
     } else {
       await db.insert(tblSiteVisitors).values({
         ip_address: ip,
-        user_agent: userAgent
+        user_agent: userAgent,
+        first_visit: now,
+        last_visit: now
       });
     }
   } catch (error) {
@@ -515,9 +525,14 @@ var init_storage = __esm({
       WHERE ${tblLoanRequests.id_buku} = ${tblBuku.id_buku}
         AND ${tblLoanRequests.status} IN ('approved', 'on_loan')
     ))`;
+        const bookCategoryCondition = eq(tblKategori.nama_kategori, "Book");
         const likeQuery = search ? `%${search}%` : void 0;
         const searchCondition = likeQuery ? sql`(${tblBuku.title} LIKE ${likeQuery} OR ${tblBuku.pengarang} LIKE ${likeQuery} OR ${tblBuku.penerbit} LIKE ${likeQuery} OR ${tblBuku.isbn} LIKE ${likeQuery})` : void 0;
-        const whereClause = searchCondition ? and(availabilityCondition, searchCondition) : availabilityCondition;
+        const conditions = [availabilityCondition, bookCategoryCondition];
+        if (searchCondition) {
+          conditions.push(searchCondition);
+        }
+        const combinedCondition = and(...conditions);
         const booksQuery = db.select({
           id_buku: tblBuku.id_buku,
           buku_id: tblBuku.buku_id,
@@ -538,8 +553,8 @@ var init_storage = __esm({
           file_type: tblBuku.file_type,
           kategori_nama: tblKategori.nama_kategori,
           lokasi_nama: tblLokasi.nama_lokasi
-        }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi)).where(whereClause).orderBy(asc(tblBuku.title)).limit(limit);
-        const countQuery = db.select({ count: count() }).from(tblBuku).where(whereClause);
+        }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).leftJoin(tblLokasi, eq(tblBuku.id_lokasi, tblLokasi.id_lokasi)).where(combinedCondition).orderBy(asc(tblBuku.title)).limit(limit);
+        const countQuery = db.select({ count: count() }).from(tblBuku).leftJoin(tblKategori, eq(tblBuku.id_kategori, tblKategori.id_kategori)).where(combinedCondition);
         const [books, totalResult] = await Promise.all([booksQuery, countQuery]);
         const total = totalResult[0]?.count ?? 0;
         return {
@@ -845,15 +860,14 @@ var init_storage = __esm({
               { month: "Oct", activeUsers: 67 }
             ];
           }
-          const sixMonthsAgo = /* @__PURE__ */ new Date();
-          sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+          const currentDate = /* @__PURE__ */ new Date();
+          const sixMonthWindowStart = new Date(currentDate.getFullYear(), currentDate.getMonth() - 5, 1);
           const results = await db.select({
             month: sql`DATE_FORMAT(first_visit, '%Y-%m')`,
             activeUsers: sql`COUNT(DISTINCT ip_address)`
             // Count unique IP addresses instead of user_id
-          }).from(tblSiteVisitors).where(sql`first_visit >= ${sixMonthsAgo.toISOString().split("T")[0]}`).groupBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`).orderBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`);
+          }).from(tblSiteVisitors).where(sql`first_visit >= ${sixMonthWindowStart.toISOString().split("T")[0]}`).groupBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`).orderBy(sql`DATE_FORMAT(first_visit, '%Y-%m')`);
           const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-          const currentDate = /* @__PURE__ */ new Date();
           const monthlyData = [];
           for (let i = 5; i >= 0; i--) {
             const date2 = new Date(currentDate);
@@ -915,8 +929,8 @@ var init_storage = __esm({
       async getDatabaseVisitorStats() {
         try {
           const [siteVisitors, pdfViews, uniquePdfViewers] = await Promise.all([
-            // Count unique site visitors
-            db.select({ count: count() }).from(tblSiteVisitors),
+            // Count unique site visitors (distinct IPs across all time)
+            db.select({ count: count(sql`DISTINCT ${tblSiteVisitors.ip_address}`) }).from(tblSiteVisitors),
             // Count total PDF views
             db.select({ count: count() }).from(tblPdfViews),
             // Count unique PDF viewers (distinct IPs that viewed PDFs)
@@ -1114,13 +1128,17 @@ var init_storage = __esm({
           if (!currentRequest) {
             throw new Error("Loan request not found");
           }
+          const approvalDate = /* @__PURE__ */ new Date();
+          const autoDueDate = addDays(approvalDate, 14);
           await db.update(tblLoanRequests).set({
             status: "approved",
             approved_by: adminId,
-            approval_date: /* @__PURE__ */ new Date(),
-            approval_notes: notes
+            approval_date: approvalDate,
+            approval_notes: notes,
+            due_date: autoDueDate
           }).where(eq(tblLoanRequests.id, id));
-          await this.logLoanAction(id, "approved", adminId, notes, "pending", "approved");
+          const logNotes = notes ? `${notes} (Due date auto-set to ${autoDueDate.toISOString().split("T")[0]})` : `Due date auto-set to ${autoDueDate.toISOString().split("T")[0]}`;
+          await this.logLoanAction(id, "approved", adminId, logNotes, "pending", "approved");
           try {
             if (currentRequest.id_buku) {
               await db.update(tblBuku).set({
@@ -1309,6 +1327,35 @@ var init_storage = __esm({
         } catch (error) {
           console.error("Error fetching user loan request stats by NIK:", error);
           return { pending: 0, approved: 0, returned: 0 };
+        }
+      }
+      async getMonthlyLoanBorrowed() {
+        try {
+          const borrowDateExpression = sql`COALESCE(${tblLoanRequests.loan_date}, ${tblLoanRequests.approval_date})`;
+          const startDate = /* @__PURE__ */ new Date();
+          startDate.setHours(0, 0, 0, 0);
+          startDate.setDate(1);
+          startDate.setMonth(startDate.getMonth() - 11);
+          const rawResults = await db.select({
+            monthKey: sql`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`,
+            borrowed: sql`COUNT(*)`
+          }).from(tblLoanRequests).where(and(
+            sql`${borrowDateExpression} IS NOT NULL`,
+            sql`${borrowDateExpression} >= ${startDate.toISOString().split("T")[0]}`,
+            sql`${tblLoanRequests.status} NOT IN ('pending', 'rejected')`
+          )).groupBy(sql`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`).orderBy(sql`DATE_FORMAT(${borrowDateExpression}, '%Y-%m')`);
+          const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+          return rawResults.map((result) => {
+            const [year, month] = result.monthKey.split("-");
+            const monthIndex = Math.max(0, Math.min(11, parseInt(month, 10) - 1));
+            return {
+              month: `${monthNames[monthIndex]} ${year}`,
+              borrowed: result.borrowed
+            };
+          });
+        } catch (error) {
+          console.error("Error fetching monthly loan borrowed stats:", error);
+          return [];
         }
       }
       // ===== STAFF MANAGEMENT METHODS =====
@@ -1651,6 +1698,14 @@ async function registerRoutes(app2) {
       res.json(weeklyBooks);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch weekly books data" });
+    }
+  });
+  app2.get("/api/dashboard/monthly-loans", requireAuth, async (req, res) => {
+    try {
+      const monthlyLoans = await storage.getMonthlyLoanBorrowed();
+      res.json(monthlyLoans);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch monthly loan data" });
     }
   });
   app2.get("/api/dashboard/documents-by-department", requireAuth, async (req, res) => {
@@ -2361,11 +2416,21 @@ async function registerRoutes(app2) {
       const { id } = req.params;
       const { notes } = req.body;
       const adminId = req.session.user?.id;
-      const success = await storage.approveLoanRequest(parseInt(id), adminId, notes);
+      const requestId = parseInt(id);
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
+      const success = await storage.approveLoanRequest(requestId, adminId, notes);
       if (!success) {
         return res.status(404).json({ message: "Loan request not found or already processed" });
       }
-      res.json({ message: "Loan request approved successfully" });
+      const updatedRequest = await storage.getLoanRequestById(requestId);
+      res.json({
+        message: "Loan request approved successfully",
+        dueDate: updatedRequest?.due_date,
+        approvalDate: updatedRequest?.approval_date,
+        request: updatedRequest
+      });
     } catch (error) {
       console.error("Error approving loan request:", error);
       res.status(500).json({ message: "Failed to approve loan request" });
@@ -2417,7 +2482,13 @@ async function registerRoutes(app2) {
       if (!success) {
         return res.status(404).json({ message: "Loan request not found or already processed" });
       }
-      res.json({ message: "Loan request approved successfully" });
+      const updatedRequest = await storage.getLoanRequestById(requestId);
+      res.json({
+        message: "Loan request approved successfully",
+        dueDate: updatedRequest?.due_date,
+        approvalDate: updatedRequest?.approval_date,
+        request: updatedRequest
+      });
     } catch (error) {
       console.error("Error approving loan request:", error);
       res.status(500).json({ message: "Failed to approve loan request" });
@@ -2579,7 +2650,9 @@ function serveStatic(app2) {
 
 // server/index.ts
 init_storage();
+process.env.NODE_ENV = process.env.NODE_ENV || "production";
 var app = express3();
+app.set("env", process.env.NODE_ENV);
 app.use(compression({
   filter: (req, res) => {
     if (req.headers["x-no-compression"]) {

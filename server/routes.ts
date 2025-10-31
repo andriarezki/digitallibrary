@@ -275,6 +275,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Monthly loan borrowed stats for chart
+  app.get("/api/dashboard/monthly-loans", requireAuth, async (req, res) => {
+    try {
+      const monthlyLoans = await storage.getMonthlyLoanBorrowed();
+      res.json(monthlyLoans);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch monthly loan data" });
+    }
+  });
+
   // Documents by department for chart
   app.get("/api/dashboard/documents-by-department", requireAuth, async (req, res) => {
     try {
@@ -1149,14 +1159,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const { notes } = req.body;
       const adminId = req.session.user?.id;
+
+      const requestId = parseInt(id);
+      if (isNaN(requestId) || !Number.isFinite(requestId)) {
+        return res.status(400).json({ message: "Invalid loan request ID" });
+      }
       
-      const success = await storage.approveLoanRequest(parseInt(id), adminId, notes);
+      const success = await storage.approveLoanRequest(requestId, adminId, notes);
       
       if (!success) {
         return res.status(404).json({ message: "Loan request not found or already processed" });
       }
+
+      const updatedRequest = await storage.getLoanRequestById(requestId);
       
-      res.json({ message: "Loan request approved successfully" });
+      res.json({ 
+        message: "Loan request approved successfully",
+        dueDate: updatedRequest?.due_date,
+        approvalDate: updatedRequest?.approval_date,
+        request: updatedRequest
+      });
     } catch (error) {
       console.error("Error approving loan request:", error);
       res.status(500).json({ message: "Failed to approve loan request" });
@@ -1223,8 +1245,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!success) {
         return res.status(404).json({ message: "Loan request not found or already processed" });
       }
+
+      const updatedRequest = await storage.getLoanRequestById(requestId);
       
-      res.json({ message: "Loan request approved successfully" });
+      res.json({ 
+        message: "Loan request approved successfully",
+        dueDate: updatedRequest?.due_date,
+        approvalDate: updatedRequest?.approval_date,
+        request: updatedRequest
+      });
     } catch (error) {
       console.error("Error approving loan request:", error);
       res.status(500).json({ message: "Failed to approve loan request" });
