@@ -2,6 +2,21 @@
 
 A comprehensive library management system with admin dashboard, MySQL integration, PDF viewing, and analytics for managing 17,000+ books on LAN network.
 
+## 📚 NEW: Complete Documentation with Visual Guides!
+
+We've added comprehensive presentation materials with beautiful flowcharts and analytics! 🎉
+
+**👉 Start here:** [INDEX.md](INDEX.md) - Find the right documentation for your needs
+
+**Quick links:**
+- 📊 [PRESENTATION.md](PRESENTATION.md) - Complete system presentation with flowcharts
+- 🎨 [VISUAL-GUIDE.md](VISUAL-GUIDE.md) - Easy-to-understand visual guides
+- 📈 [USER-INTEREST-ANALYTICS.md](USER-INTEREST-ANALYTICS.md) - User engagement & interest graphs
+- 📋 [QUICK-REFERENCE.md](QUICK-REFERENCE.md) - Quick reference card for daily use
+- 📖 [NEW-DOCS-SUMMARY.md](NEW-DOCS-SUMMARY.md) - Summary of new documentation
+
+---
+
 ## Features
 
 - **Dashboard**: Beautiful charts with soft colors showing collection status, top categories, and monthly activity
